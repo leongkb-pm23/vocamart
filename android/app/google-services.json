@@ -1,0 +1,54 @@
+{
+  "project_info": {
+    "project_number": "630951250062",
+    "project_id": "fyp2-90049",
+    "storage_bucket": "fyp2-90049.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:630951250062:android:d3068952eee31973a0e1df",
+        "android_client_info": {
+          "package_name": "tarumt.edu.my.fyp"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "630951250062-k9kvas72lip0ltu1vqsrid946vr68u8j.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "tarumt.edu.my.fyp",
+            "certificate_hash": "02a46ab55dbb37a5bd4262f884adc8c04aad55ee"
+          }
+        },
+        {
+          "client_id": "630951250062-oo9kkacubbncehdf1u6r4k6r72mnqbsh.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB-lQtM9-AC2nevhxT2PRpzQ3PSNu9RZok"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "630951250062-oo9kkacubbncehdf1u6r4k6r72mnqbsh.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "630951250062-q9l7vfq2tp495voi6lqt4isneq4cmd7s.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "tarumt.edu.my.fyp"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

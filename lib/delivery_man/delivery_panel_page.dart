@@ -137,6 +137,13 @@ class DeliveryPanelPage extends StatelessWidget {
   Widget build(BuildContext context) {
     const kOrange = Color(0xFF00695C);
     final svc = FirestoreService();
+    String normalizeDeliveryStatus(String raw) {
+      final s = raw.trim();
+      if (s == 'To Ship') return 'Assigned';
+      if (s == 'To Receive') return 'On The Way';
+      if (s == 'Completed') return 'Delivered';
+      return s;
+    }
 
     return Scaffold(
       backgroundColor: const Color(0xFFF2F7F6),
@@ -190,7 +197,7 @@ class DeliveryPanelPage extends StatelessWidget {
             );
           }
           final docs = [...snap.data!.docs];
-          // Show latest assignment first for delivery workflow.
+          // Show latest order updates first.
           docs.sort((a, b) {
             final aTime = _latestAssignmentTime(a.data());
             final bTime = _latestAssignmentTime(b.data());
@@ -216,10 +223,10 @@ class DeliveryPanelPage extends StatelessWidget {
           int onTheWayCount = 0;
           int deliveredCount = 0;
           for (final doc in docs) {
-            final status = _text(
+            final status = normalizeDeliveryStatus(_text(
               doc.data()['deliveryStatus'],
               fallback: _text(doc.data()['status'], fallback: 'Assigned'),
-            );
+            ));
             if (status == 'Delivered') {
               deliveredCount += 1;
             } else if (status == 'On The Way') {
@@ -277,9 +284,7 @@ class DeliveryPanelPage extends StatelessWidget {
                   itemBuilder: (_, i) {
                     final d = docs[i];
                     final assignData = d.data();
-                    // assigned_orders keeps link to the real order document.
                     final orderPath = (assignData['orderPath'] ?? '').toString();
-
                     if (orderPath.isEmpty) {
                       return _infoCard('Invalid assignment data.');
                     }
@@ -290,28 +295,40 @@ class DeliveryPanelPage extends StatelessWidget {
                         if (!orderSnap.hasData) {
                           return _infoCard('', loading: true);
                         }
-
                         if (!orderSnap.data!.exists) {
                           return _infoCard('Order no longer exists.');
                         }
 
                         final o = orderSnap.data!.data() ?? const {};
-                        final status = _text(o['deliveryStatus'], fallback: 'Assigned');
+                        final status = normalizeDeliveryStatus(
+                          _text(
+                            o['deliveryStatus'],
+                            fallback: _text(
+                              o['status'],
+                              fallback: _text(
+                                assignData['deliveryStatus'],
+                                fallback: _text(assignData['status'], fallback: 'Assigned'),
+                              ),
+                            ),
+                          ),
+                        );
                         final orderAddress = _text(
                           o['deliveryAddress'] ??
                               o['address'] ??
                               assignData['deliveryAddress'],
                         );
-                        final customer = _text(o['customerPhone']);
+                        final customer = _text(
+                          o['customerPhone'] ?? assignData['customerPhone'],
+                        );
                         final fee = (o['deliveryFee'] is num)
                             ? (o['deliveryFee'] as num).toDouble()
                             : (assignData['deliveryFee'] is num)
-                            ? (assignData['deliveryFee'] as num).toDouble()
-                            : 5.0;
+                                ? (assignData['deliveryFee'] as num).toDouble()
+                                : 5.0;
                         final isOnTheWay = status == 'On The Way';
                         final isDelivered = status == 'Delivered';
+
                         Widget buildOrderCard(String address) {
-                          // Local helper widget so both direct and fallback address use same UI.
                           return Container(
                             decoration: BoxDecoration(
                               color: Colors.white,
@@ -380,27 +397,26 @@ class DeliveryPanelPage extends StatelessWidget {
                                       ElevatedButton.icon(
                                         style: ElevatedButton.styleFrom(
                                           backgroundColor:
-                                          isOnTheWay
-                                              ? const Color(0xFF1565C0)
-                                              : Colors.grey.shade200,
+                                              isOnTheWay
+                                                  ? const Color(0xFF1565C0)
+                                                  : Colors.grey.shade200,
                                           foregroundColor:
-                                          isOnTheWay
-                                              ? Colors.white
-                                              : Colors.black87,
+                                              isOnTheWay
+                                                  ? Colors.white
+                                                  : Colors.black87,
                                         ),
                                         onPressed: () async {
                                           final ok = await showConfirmDialog(
                                             context,
                                             title: 'Update Delivery',
                                             message:
-                                            'Set delivery status to "On The Way"?',
+                                                'Set delivery status to "On The Way"?',
                                             confirmText: 'Update',
                                           );
                                           if (!ok) return;
                                           await svc.updateOrderByPath(
                                             orderPath: orderPath,
                                             data: {
-                                              // Keep user/admin status aligned with delivery status.
                                               'deliveryStatus': 'On The Way',
                                               'status': 'To Receive',
                                             },
@@ -412,20 +428,20 @@ class DeliveryPanelPage extends StatelessWidget {
                                       ElevatedButton.icon(
                                         style: ElevatedButton.styleFrom(
                                           backgroundColor:
-                                          isDelivered
-                                              ? const Color(0xFF2E7D32)
-                                              : Colors.grey.shade200,
+                                              isDelivered
+                                                  ? const Color(0xFF2E7D32)
+                                                  : Colors.grey.shade200,
                                           foregroundColor:
-                                          isDelivered
-                                              ? Colors.white
-                                              : Colors.black87,
+                                              isDelivered
+                                                  ? Colors.white
+                                                  : Colors.black87,
                                         ),
                                         onPressed: () async {
                                           final ok = await showConfirmDialog(
                                             context,
                                             title: 'Update Delivery',
                                             message:
-                                            'Set delivery status to "Delivered"?',
+                                                'Set delivery status to "Delivered"?',
                                             confirmText: 'Update',
                                           );
                                           if (!ok) return;
@@ -433,7 +449,6 @@ class DeliveryPanelPage extends StatelessWidget {
                                             orderPath: orderPath,
                                             data: {
                                               'deliveryStatus': 'Delivered',
-                                              // Completed when parcel is confirmed delivered.
                                               'status': 'Completed',
                                             },
                                           );

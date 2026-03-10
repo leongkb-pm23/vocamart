@@ -64,11 +64,12 @@ class _HomePageState extends State<HomePage> {
   bool _voiceListening = false;
   bool _awaitingCommand = false;
   bool _handlingVoiceResult = false;
-  bool _manualVoiceRequest = true;
+  bool _manualVoiceRequest = false;
   bool _voiceFatalErrorShown = false;
   bool _voiceInitInProgress = false;
   DateTime? _lastVoiceErrorAt;
   Timer? _voiceRestartTimer;
+  String? _voiceLocaleId;
   static const String _wakePhrase = 'hey vocamart';
   static const String _wakePhraseAlt = 'hey voca mart';
 
@@ -129,7 +130,10 @@ class _HomePageState extends State<HomePage> {
   void initState() {
     super.initState();
     _redirectDeliveryIfNeeded();
-    _initVoiceAssistant();
+    if (!_isGuest()) {
+      _manualVoiceRequest = true;
+      _initVoiceAssistant();
+    }
   }
 
   @override
@@ -316,6 +320,32 @@ class _HomePageState extends State<HomePage> {
     return benign.contains(code);
   }
 
+  Future<String?> _pickSupportedVoiceLocale() async {
+    try {
+      final locales = await _speech.locales();
+      if (locales.isEmpty) return null;
+
+      bool hasLocale(String id) {
+        for (final l in locales) {
+          if (l.localeId.toLowerCase() == id.toLowerCase()) {
+            return true;
+          }
+        }
+        return false;
+      }
+
+      for (final preferred in const ['en_US', 'en_GB', 'en_MY']) {
+        if (hasLocale(preferred)) return preferred;
+      }
+
+      final system = await _speech.systemLocale();
+      if (system != null && hasLocale(system.localeId)) {
+        return system.localeId;
+      }
+    } catch (_) {}
+    return null;
+  }
+
   void _scheduleAssistantRestart({
     Duration delay = const Duration(milliseconds: 900),
   }) {
@@ -374,6 +404,10 @@ class _HomePageState extends State<HomePage> {
             _voiceListening = false;
           });
           final code = (error.errorMsg).toLowerCase().trim();
+          final isBusy = code.contains('busy');
+          final isLangUnsupported =
+              code.contains('language') &&
+              (code.contains('supported') || code.contains('available'));
 
           // Permission/audio-recording errors are fatal until user fixes settings.
           final fatal =
@@ -392,6 +426,19 @@ class _HomePageState extends State<HomePage> {
             return;
           }
 
+          if (isLangUnsupported) {
+            // Fallback to plugin/device default locale.
+            _voiceLocaleId = null;
+            _showSnack('Selected voice language not supported. Using default.');
+            _scheduleAssistantRestart(delay: const Duration(milliseconds: 700));
+            return;
+          }
+
+          if (isBusy) {
+            _scheduleAssistantRestart(delay: const Duration(milliseconds: 1500));
+            return;
+          }
+
           final now = DateTime.now();
           final shouldNotifyError =
               _manualVoiceRequest &&
@@ -405,6 +452,9 @@ class _HomePageState extends State<HomePage> {
           _scheduleAssistantRestart(delay: const Duration(milliseconds: 1300));
         },
       );
+      if (ready) {
+        _voiceLocaleId = await _pickSupportedVoiceLocale();
+      }
     } catch (_) {
       ready = false;
     } finally {
@@ -429,6 +479,11 @@ class _HomePageState extends State<HomePage> {
     if (_voiceListening) return;
 
     try {
+      if (_speech.isListening) {
+        await _speech.stop();
+        await Future<void>.delayed(const Duration(milliseconds: 180));
+      }
+
       await _speech.listen(
         onResult: (result) {
           final spoken = _normalizeVoice(result.recognizedWords);
@@ -476,6 +531,7 @@ class _HomePageState extends State<HomePage> {
           cancelOnError: false,
           partialResults: true,
         ),
+        localeId: _voiceLocaleId,
         listenFor: const Duration(minutes: 1),
         pauseFor: const Duration(seconds: 4),
       );
@@ -484,7 +540,20 @@ class _HomePageState extends State<HomePage> {
       setState(() {
         _voiceListening = true;
       });
-    } catch (_) {
+    } catch (e) {
+      final code = e.toString().toLowerCase();
+      if (code.contains('busy')) {
+        try {
+          await _speech.stop();
+          await _speech.cancel();
+        } catch (_) {}
+        _scheduleAssistantRestart(delay: const Duration(milliseconds: 1700));
+        return;
+      }
+      if (code.contains('language') &&
+          (code.contains('supported') || code.contains('available'))) {
+        _voiceLocaleId = null;
+      }
       if (!mounted) return;
       setState(() {
         _voiceListening = false;
@@ -494,6 +563,11 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _openVoiceCommand() async {
+    if (_isGuest()) {
+      _showSnack('Please login to use voice assistant.');
+      return;
+    }
+
     if (!_voiceReady) {
       await _initVoiceAssistant();
       if (!_voiceReady) {
@@ -759,7 +833,7 @@ class _HomePageState extends State<HomePage> {
   Stream<bool> _unreadNotificationsStream() {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null || user.isAnonymous) {
-      return Stream<bool>.value(false);
+      return Stream<bool>.value(false).asBroadcastStream();
     }
 
     return FirebaseFirestore.instance
@@ -769,7 +843,8 @@ class _HomePageState extends State<HomePage> {
         .where('read', isEqualTo: false)
         .limit(1)
         .snapshots()
-        .map((snap) => snap.docs.isNotEmpty);
+        .map((snap) => snap.docs.isNotEmpty)
+        .asBroadcastStream();
   }
 }
 
@@ -1956,8 +2031,8 @@ class _EventsBanner extends StatelessWidget {
               height: 160,
               indicatorColor: const Color(0xFFFF6A00),
               indicatorBackgroundColor: Colors.black12,
-              autoPlayInterval: 3500,
-              isLoop: true,
+              autoPlayInterval: 0,
+              isLoop: false,
               children: const [
                 ColoredBox(color: Color(0xFFEDEDED)),
                 ColoredBox(color: Color(0xFFE2E2E2)),
@@ -1974,8 +2049,8 @@ class _EventsBanner extends StatelessWidget {
             height: 160,
             indicatorColor: const Color(0xFFFF6A00),
             indicatorBackgroundColor: Colors.black12,
-            autoPlayInterval: 3500,
-            isLoop: true,
+            autoPlayInterval: 0,
+            isLoop: false,
             children: _slideWidgets(context, activeDocs),
           ),
         );

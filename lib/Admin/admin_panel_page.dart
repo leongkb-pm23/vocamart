@@ -1910,13 +1910,33 @@ class _ProductsTabState extends State<_ProductsTab> {
                           foregroundColor: _AdminColors.primary,
                           child: Icon(Icons.inventory_2_outlined),
                         ),
-                        title: Text(
-                          "${p['name']} (${d.id})",
-                          style: const TextStyle(fontWeight: FontWeight.w900),
+                        title: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              (p['name'] ?? '').toString(),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontWeight: FontWeight.w900),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              'ID: ${d.id}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: _AdminColors.textMuted,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
                         ),
                         subtitle: Text(
                           "${p['unit'] ?? ''} - ${p['category'] ?? ''}"
                           " | Qty: $qty${outOfStock ? ' (Out of stock)' : ''}",
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
                         ),
                         trailing: Wrap(
                           spacing: 4,
@@ -2024,11 +2044,14 @@ class _PricesTabState extends State<_PricesTab> {
   ) {
     final items = <DropdownMenuItem<String>>[];
     for (final product in products) {
+      final name = (product.data()['name'] ?? product.id).toString();
       items.add(
         DropdownMenuItem<String>(
           value: product.id,
           child: Text(
-            '${(product.data()['name'] ?? product.id)} (${product.id})',
+            name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
         ),
       );
@@ -2385,13 +2408,30 @@ class _PricesTabState extends State<_PricesTab> {
                                       foregroundColor: _AdminColors.primary,
                                       child: Icon(Icons.attach_money_outlined),
                                     ),
-                                    title: Text(
-                                      "${p['storeName']} (${d.id})",
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.w900,
-                                      ),
+                                    title: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          (p['storeName'] ?? '').toString(),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.w900,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          'Store ID: ${d.id}',
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                            fontSize: 12,
+                                            color: _AdminColors.textMuted,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                      ],
                                     ),
                                     subtitle: Text(
                                       "Normal: RM ${price?.toStringAsFixed(2) ?? '-'}"

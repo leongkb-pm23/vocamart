@@ -1222,63 +1222,89 @@ class AppStore extends ChangeNotifier {
       voucherCode: voucher?.code ?? '',
     );
 
-    // Validate stock first (read-only). Product writes are admin-only by rules.
-    for (final item in items) {
-      final productRef = _db.collection('products').doc(item.productId);
-      final productSnap = await productRef.get();
-      if (!productSnap.exists) {
-        throw StateError('Product not found: ${item.productId}');
-      }
-      final data = productSnap.data() ?? const <String, dynamic>{};
-      final productName = (data['name'] ?? item.productId).toString();
-      final available = _asInt(data['quantity'], fallback: 0);
-      if (available <= 0) {
-        throw StateError('$productName is out of stock.');
-      }
-      if (available < item.qty) {
+    try {
+      await _db.runTransaction((txn) async {
+        final productSnapshots =
+            <String, DocumentSnapshot<Map<String, dynamic>>>{};
+
+        // Firestore transaction rule: all reads must happen before writes.
+        for (final item in items) {
+          final productRef = _db.collection('products').doc(item.productId);
+          final productSnap = await txn.get(productRef);
+          if (!productSnap.exists) {
+            throw StateError('Product not found: ${item.productId}');
+          }
+          productSnapshots[item.productId] = productSnap;
+        }
+
+        for (final item in items) {
+          final productRef = _db.collection('products').doc(item.productId);
+          final productSnap = productSnapshots[item.productId];
+          if (productSnap == null || !productSnap.exists) {
+            throw StateError('Product not found: ${item.productId}');
+          }
+          final data = productSnap.data() ?? const <String, dynamic>{};
+          final productName = (data['name'] ?? item.productId).toString();
+          final available = _asInt(data['quantity'], fallback: 0);
+          if (available <= 0) {
+            throw StateError('$productName is out of stock.');
+          }
+          if (available < item.qty) {
+            throw StateError(
+              '$productName has only $available item(s) left in stock.',
+            );
+          }
+
+          txn.update(productRef, {
+            'quantity': available - item.qty,
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+        }
+
+        txn.set(ref, {
+          'createdAt': FieldValue.serverTimestamp(),
+          'updatedAt': FieldValue.serverTimestamp(),
+          'userId': uid,
+          'customerName': customerName,
+          'customerPhone': customerPhone,
+          'address': deliveryAddress,
+          'deliveryAddress': deliveryAddress,
+          'deliveryDistanceKm': deliveryDistanceKm,
+          'deliveryFee': deliveryFee,
+          // Main user/admin status and delivery status are tracked separately.
+          'status': order.status,
+          'total': order.total,
+          'subtotal': subtotal,
+          'discount': discount,
+          'voucherId': voucher?.id,
+          'voucherCode': voucher?.code,
+          'voucherPercent': voucher?.percent,
+          'paymentMethodId': paymentMethod?.id,
+          'paymentType': paymentMethod?.type,
+          'paymentLast4': paymentMethod?.last4,
+          'items': _orderItemsToMap(order.items),
+        });
+
+        for (final item in items) {
+          final cartRef = _userDoc(uid).collection('cart').doc(item.productId);
+          txn.delete(cartRef);
+        }
+
+        if (voucher != null) {
+          final voucherRef = _userDoc(uid).collection('vouchers').doc(
+            voucher.id,
+          );
+          txn.delete(voucherRef);
+        }
+      });
+    } on FirebaseException catch (e) {
+      if (e.code == 'permission-denied') {
         throw StateError(
-          '$productName has only $available item(s) left in stock.',
+          'Checkout blocked by Firestore rules: user cannot update product stock.',
         );
       }
+      rethrow;
     }
-
-    final batch = _db.batch();
-
-    batch.set(ref, {
-      'createdAt': FieldValue.serverTimestamp(),
-      'updatedAt': FieldValue.serverTimestamp(),
-      'userId': uid,
-      'customerName': customerName,
-      'customerPhone': customerPhone,
-      'address': deliveryAddress,
-      'deliveryAddress': deliveryAddress,
-      'deliveryDistanceKm': deliveryDistanceKm,
-      'deliveryFee': deliveryFee,
-      // Main user/admin status and delivery status are tracked separately.
-      'status': order.status,
-      'total': order.total,
-      'subtotal': subtotal,
-      'discount': discount,
-      'voucherId': voucher?.id,
-      'voucherCode': voucher?.code,
-      'voucherPercent': voucher?.percent,
-      'paymentMethodId': paymentMethod?.id,
-      'paymentType': paymentMethod?.type,
-      'paymentLast4': paymentMethod?.last4,
-      'items': _orderItemsToMap(order.items),
-    });
-
-    for (final item in items) {
-      final cartRef = _userDoc(uid).collection('cart').doc(item.productId);
-      batch.delete(cartRef);
-    }
-
-    if (voucher != null) {
-      final voucherRef = _userDoc(uid).collection('vouchers').doc(voucher.id);
-      batch.delete(voucherRef);
-    }
-
-    await batch.commit();
 
     _appliedVoucherId = null;
     await _log('Created order ${order.id}');

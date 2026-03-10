@@ -143,6 +143,11 @@ class _CartPageState extends State<CartPage> {
   String? _selectedPaymentId;
   String _selectedAddressPreview = '';
 
+  bool _isGuestUser() {
+    final user = FirebaseAuth.instance.currentUser;
+    return user == null || user.isAnonymous;
+  }
+
   BoxDecoration _surfaceCardDecoration({bool highlighted = false}) {
     return BoxDecoration(
       color: Colors.white,
@@ -661,6 +666,11 @@ class _CartPageState extends State<CartPage> {
   }
 
   Future<void> _checkout(BuildContext context, AppStore store) async {
+    if (_isGuestUser()) {
+      _showSnack(context, 'Please login to checkout.');
+      return;
+    }
+
     var deliveryAddress = await _selectedAddressFromBook();
     if (deliveryAddress.isEmpty) deliveryAddress = await _currentAddress();
     if (!context.mounted) return;
@@ -760,6 +770,7 @@ class _CartPageState extends State<CartPage> {
     return AnimatedBuilder(
       animation: store,
       builder: (context, _) {
+        final isGuestUser = _isGuestUser();
         final hasAddressForEstimate = _selectedAddressPreview.trim().isNotEmpty;
         final estimatedDistanceKm =
             hasAddressForEstimate
@@ -1040,7 +1051,10 @@ class _CartPageState extends State<CartPage> {
                                               ),
                                             ),
                                             TextButton(
-                                              onPressed: () async {
+                                              onPressed:
+                                                  isGuestUser
+                                                      ? null
+                                                      : () async {
                                                 final value =
                                                     await _editAddressDialog(
                                                       context,
@@ -1096,7 +1110,18 @@ class _CartPageState extends State<CartPage> {
                                             ),
                                           ],
                                         ),
-                                        if (rows.isEmpty)
+                                        if (isGuestUser)
+                                          const Padding(
+                                            padding: EdgeInsets.only(top: 2),
+                                            child: Text(
+                                              'Guest mode: login required to add delivery addresses.',
+                                              style: TextStyle(
+                                                fontWeight: FontWeight.w700,
+                                                color: Colors.redAccent,
+                                              ),
+                                            ),
+                                          )
+                                        else if (rows.isEmpty)
                                           const Padding(
                                             padding: EdgeInsets.only(top: 2),
                                             child: Text(
@@ -1299,14 +1324,27 @@ class _CartPageState extends State<CartPage> {
                                           ),
                                         ),
                                         TextButton(
-                                          onPressed: () async {
-                                            await _openCardDetail(context);
-                                          },
+                                          onPressed:
+                                              isGuestUser
+                                                  ? null
+                                                  : () async {
+                                                    await _openCardDetail(
+                                                      context,
+                                                    );
+                                                  },
                                           child: const Text('Manage Cards'),
                                         ),
                                       ],
                                     ),
-                                    if (store.payments.isEmpty)
+                                    if (isGuestUser)
+                                      const Text(
+                                        'Guest mode: login required to add payment method.',
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.w700,
+                                          color: Colors.redAccent,
+                                        ),
+                                      )
+                                    else if (store.payments.isEmpty)
                                       const Text(
                                         'No payment card yet. Add one from Card Detail.',
                                         style: TextStyle(
@@ -1564,7 +1602,9 @@ class _CartPageState extends State<CartPage> {
                                         Text(
                                           hasAddressForEstimate
                                               ? 'RM ${estimatedDeliveryFee.toStringAsFixed(2)}'
-                                              : 'Add address',
+                                              : (isGuestUser
+                                                  ? 'Login required'
+                                                  : 'Add address'),
                                           style: const TextStyle(
                                             color: CartPage.kOrange,
                                           ),
@@ -1620,7 +1660,8 @@ class _CartPageState extends State<CartPage> {
                                           ),
                                           onPressed:
                                               store.cart.isEmpty ||
-                                                      hasUnavailableItems
+                                                      hasUnavailableItems ||
+                                                      isGuestUser
                                                   ? null
                                                   : () {
                                                     _checkout(context, store);

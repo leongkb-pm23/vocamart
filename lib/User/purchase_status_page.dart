@@ -27,9 +27,17 @@ class PurchaseStatusPage extends StatelessWidget {
     return raw.trim().toLowerCase();
   }
 
-  bool _isCompletedStatus(String raw) {
+  bool _isToShipStatus(String raw) {
     final s = _normalizeStatus(raw);
-    return s == 'completed' || s == 'delivered' || s == 'cancelled';
+    return s == 'to ship' ||
+        s == 'pending' ||
+        s == 'processing' ||
+        s == 'assigned';
+  }
+
+  bool _isToReceiveStatus(String raw) {
+    final s = _normalizeStatus(raw);
+    return s == 'to receive' || s == 'shipping';
   }
 
   Color _statusColor(String raw) {
@@ -223,11 +231,12 @@ class PurchaseStatusPage extends StatelessWidget {
       title: status,
       appBarColor: _orange,
       ordersBuilder: (store) {
-        // "To Ship" acts as user order-tracking page and shows all statuses.
         if (_normalizeStatus(status) == 'to ship') {
           final rows = <OrderItem>[];
           for (final order in store.orders) {
-            rows.add(order);
+            if (_isToShipStatus(order.status)) {
+              rows.add(order);
+            }
           }
           rows.sort((a, b) => b.createdAt.compareTo(a.createdAt));
           return rows;
@@ -236,7 +245,7 @@ class PurchaseStatusPage extends StatelessWidget {
         if (_normalizeStatus(status) == 'to receive') {
           final rows = <OrderItem>[];
           for (final order in store.orders) {
-            if (!_isCompletedStatus(order.status)) {
+            if (_isToReceiveStatus(order.status)) {
               rows.add(order);
             }
           }

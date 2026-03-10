@@ -137,6 +137,218 @@ class UsersAdminTab extends StatelessWidget {
     return (d['email'] ?? '').toString();
   }
 
+  Future<void> _addOrEditUser(
+    BuildContext context, {
+    String? userId,
+    Map<String, dynamic>? data,
+  }) async {
+    final formKey = GlobalKey<FormState>();
+    final idCtrl = TextEditingController(text: userId ?? '');
+    final nameCtrl = TextEditingController(
+      text: (data?['name'] ?? data?['displayName'] ?? '').toString(),
+    );
+    final emailCtrl = TextEditingController(
+      text: (data?['email'] ?? '').toString(),
+    );
+    final phoneCtrl = TextEditingController(
+      text: (data?['phone'] ?? '').toString(),
+    );
+    final addressCtrl = TextEditingController(
+      text: (data?['address'] ?? '').toString(),
+    );
+
+    var role = (data?['role'] ?? 'user').toString().trim();
+    if (role.isEmpty) role = 'user';
+    var blocked = (data?['blocked'] ?? false) == true;
+    var onDuty = (data?['deliveryOnDuty'] ?? true) == true;
+    var saving = false;
+    String? errorText;
+
+    await showDialog(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (dialogContext, setDialogState) {
+            return AlertDialog(
+              title: Text(userId == null ? 'Add User' : 'Edit User'),
+              content: SingleChildScrollView(
+                child: Form(
+                  key: formKey,
+                  autovalidateMode: AutovalidateMode.onUserInteraction,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextFormField(
+                        controller: idCtrl,
+                        enabled: userId == null,
+                        decoration: const InputDecoration(
+                          labelText: 'User ID',
+                          border: OutlineInputBorder(),
+                        ),
+                        validator: (v) {
+                          final text = (v ?? '').trim();
+                          if (text.isEmpty) return 'User ID is required.';
+                          if (text.contains(' ')) return 'User ID cannot contain spaces.';
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 10),
+                      TextFormField(
+                        controller: nameCtrl,
+                        decoration: const InputDecoration(
+                          labelText: 'Name',
+                          border: OutlineInputBorder(),
+                        ),
+                        validator: (v) =>
+                            (v ?? '').trim().isEmpty ? 'Name is required.' : null,
+                      ),
+                      const SizedBox(height: 10),
+                      TextFormField(
+                        controller: emailCtrl,
+                        keyboardType: TextInputType.emailAddress,
+                        decoration: const InputDecoration(
+                          labelText: 'Email',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      TextFormField(
+                        controller: phoneCtrl,
+                        keyboardType: TextInputType.phone,
+                        decoration: const InputDecoration(
+                          labelText: 'Phone',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      TextFormField(
+                        controller: addressCtrl,
+                        maxLines: 2,
+                        decoration: const InputDecoration(
+                          labelText: 'Address',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      DropdownButtonFormField<String>(
+                        value: role,
+                        decoration: const InputDecoration(
+                          labelText: 'Role',
+                          border: OutlineInputBorder(),
+                        ),
+                        items: const [
+                          DropdownMenuItem(value: 'user', child: Text('User')),
+                          DropdownMenuItem(value: 'admin', child: Text('Admin')),
+                          DropdownMenuItem(
+                            value: 'delivery',
+                            child: Text('Delivery'),
+                          ),
+                        ],
+                        onChanged: (v) {
+                          setDialogState(() {
+                            role = (v ?? 'user').trim();
+                          });
+                        },
+                      ),
+                      const SizedBox(height: 6),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('Blocked'),
+                        value: blocked,
+                        onChanged: (v) {
+                          setDialogState(() => blocked = v);
+                        },
+                      ),
+                      if (role == 'delivery')
+                        SwitchListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: const Text('Delivery On Duty'),
+                          value: onDuty,
+                          onChanged: (v) {
+                            setDialogState(() => onDuty = v);
+                          },
+                        ),
+                      if (errorText != null)
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            errorText!,
+                            style: const TextStyle(
+                              color: Colors.red,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: saving ? null : () => Navigator.pop(dialogContext),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: !saving
+                      ? () async {
+                          if (!formKey.currentState!.validate()) return;
+
+                          final targetId = idCtrl.text.trim();
+                          final payload = <String, dynamic>{
+                            'name': nameCtrl.text.trim(),
+                            'displayName': nameCtrl.text.trim(),
+                            'email': emailCtrl.text.trim(),
+                            'phone': phoneCtrl.text.trim(),
+                            'address': addressCtrl.text.trim(),
+                            'role': role,
+                            'blocked': blocked,
+                            'deliveryOnDuty': role == 'delivery' ? onDuty : false,
+                            'updatedAt': FieldValue.serverTimestamp(),
+                            if (userId == null)
+                              'createdAt': FieldValue.serverTimestamp(),
+                          };
+
+                          setDialogState(() {
+                            saving = true;
+                            errorText = null;
+                          });
+
+                          try {
+                            await FirebaseFirestore.instance
+                                .collection('users')
+                                .doc(targetId)
+                                .set(payload, SetOptions(merge: true));
+                            if (!context.mounted) return;
+                            Navigator.pop(dialogContext);
+                            _showMsg(
+                              context,
+                              userId == null
+                                  ? 'User added successfully.'
+                                  : 'User updated successfully.',
+                            );
+                          } on FirebaseException catch (e) {
+                            setDialogState(() {
+                              saving = false;
+                              errorText = 'Save failed: ${e.message ?? e.code}';
+                            });
+                          } catch (e) {
+                            setDialogState(() {
+                              saving = false;
+                              errorText = 'Save failed: $e';
+                            });
+                          }
+                        }
+                      : null,
+                  child: Text(userId == null ? 'Add' : 'Save'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
@@ -163,6 +375,15 @@ class UsersAdminTab extends StatelessWidget {
                 icon: Icons.people_alt_outlined,
                 countText: '${docs.length}',
               ),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: () => _addOrEditUser(context),
+                  icon: const Icon(Icons.person_add_alt_1_outlined),
+                  label: const Text('Add User'),
+                ),
+              ),
+              const SizedBox(height: 10),
               Expanded(
                 child:
                     docs.isEmpty
@@ -241,7 +462,13 @@ class UsersAdminTab extends StatelessWidget {
                                 ),
                                 trailing: PopupMenuButton<String>(
                                   onSelected: (value) async {
-                                    if (value == 'user' ||
+                                    if (value == 'edit') {
+                                      await _addOrEditUser(
+                                        context,
+                                        userId: d.id,
+                                        data: data,
+                                      );
+                                    } else if (value == 'user' ||
                                         value == 'admin' ||
                                         value == 'delivery') {
                                       await _setRole(
@@ -256,6 +483,10 @@ class UsersAdminTab extends StatelessWidget {
                                   },
                                   itemBuilder:
                                       (_) => [
+                                        const PopupMenuItem(
+                                          value: 'edit',
+                                          child: Text('Edit User'),
+                                        ),
                                         const PopupMenuItem(
                                           value: 'user',
                                           child: Text('Set as User'),
@@ -380,7 +611,6 @@ class _OrdersAdminTabState extends State<OrdersAdminTab> {
   Future<void> _assignDelivery(
     BuildContext context,
     DocumentReference<Map<String, dynamic>> orderRef,
-    String orderId,
     String? currentDeliveryId,
   ) async {
     final deliverySnap = await _deliveryUsersStream().first;
@@ -486,23 +716,24 @@ class _OrdersAdminTabState extends State<OrdersAdminTab> {
                                 picked.data()['email'] ??
                                 picked.id)
                             .toString();
+                    final staffEmail =
+                        (picked.data()['email'] ?? '').toString().trim();
 
                     try {
+                      // Use service flow so writes go to allowed path:
+                      // delivery_staff/{uid}/assigned_orders/{orderKey}.
+                      await widget.svc.assignDelivery(
+                        orderPath: orderRef.path,
+                        deliveryUid: selectedId!,
+                        deliveryEmail: staffEmail,
+                      );
+
+                      // Keep legacy fields for existing admin/user UI labels.
                       await orderRef.set({
                         'deliveryId': selectedId,
                         'deliveryName': staffName,
                         'updatedAt': FieldValue.serverTimestamp(),
                       }, SetOptions(merge: true));
-
-                      await FirebaseFirestore.instance
-                          .collection('assigned_orders')
-                          .doc(orderId)
-                          .set({
-                            'orderId': orderId,
-                            'deliveryId': selectedId,
-                            'deliveryName': staffName,
-                            'updatedAt': FieldValue.serverTimestamp(),
-                          }, SetOptions(merge: true));
 
                       if (context.mounted) {
                         Navigator.pop(dialogContext);
@@ -745,7 +976,6 @@ class _OrdersAdminTabState extends State<OrdersAdminTab> {
                                       () => _assignDelivery(
                                         context,
                                         d.reference,
-                                        d.id,
                                         (o['deliveryId'] ?? '').toString(),
                                       ),
                                   icon: const Icon(
@@ -1482,142 +1712,181 @@ class EventsAdminTab extends StatelessWidget {
                                   color: const Color(0xFFE6E6E6),
                                 ),
                               ),
-                              child: ListTile(
+                              child: InkWell(
+                                borderRadius: BorderRadius.circular(12),
                                 onTap: () => _previewEvent(context, d.id, e),
-                                contentPadding: const EdgeInsets.symmetric(
-                                  horizontal: 14,
-                                  vertical: 8,
-                                ),
-                                leading: ClipRRect(
-                                  borderRadius: BorderRadius.circular(8),
-                                  child: SizedBox(
-                                    width: 52,
-                                    height: 52,
-                                    child:
-                                        _isHttpImageUrl(imageUrl)
-                                            ? Image.network(
-                                              imageUrl,
-                                              fit: BoxFit.cover,
-                                              errorBuilder: (_, __, ___) {
-                                                return const ColoredBox(
-                                                  color: Color(0xFFE3F2FD),
-                                                  child: Icon(
-                                                    Icons.broken_image_outlined,
-                                                    color: Color(0xFF1565C0),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(12),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          ClipRRect(
+                                            borderRadius:
+                                                BorderRadius.circular(8),
+                                            child: SizedBox(
+                                              width: 52,
+                                              height: 52,
+                                              child:
+                                                  _isHttpImageUrl(imageUrl)
+                                                      ? Image.network(
+                                                        imageUrl,
+                                                        fit: BoxFit.cover,
+                                                        errorBuilder:
+                                                            (_, __, ___) {
+                                                          return const ColoredBox(
+                                                            color: Color(
+                                                              0xFFE3F2FD,
+                                                            ),
+                                                            child: Icon(
+                                                              Icons
+                                                                  .broken_image_outlined,
+                                                              color: Color(
+                                                                0xFF1565C0,
+                                                              ),
+                                                            ),
+                                                          );
+                                                        },
+                                                      )
+                                                      : const ColoredBox(
+                                                        color: Color(
+                                                          0xFFE3F2FD,
+                                                        ),
+                                                        child: Icon(
+                                                          Icons
+                                                              .event_note_outlined,
+                                                          color: Color(
+                                                            0xFF1565C0,
+                                                          ),
+                                                        ),
+                                                      ),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 10),
+                                          Expanded(
+                                            child: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
+                                                Text(
+                                                  title,
+                                                  maxLines: 1,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                  style: const TextStyle(
+                                                    fontWeight: FontWeight.w900,
+                                                    fontSize: 16,
                                                   ),
-                                                );
-                                              },
-                                            )
-                                            : const ColoredBox(
-                                              color: Color(0xFFE3F2FD),
-                                              child: Icon(
-                                                Icons.event_note_outlined,
-                                                color: Color(0xFF1565C0),
+                                                ),
+                                                const SizedBox(height: 2),
+                                                Text(
+                                                  'Date: $date',
+                                                  style: const TextStyle(
+                                                    color: Colors.black54,
+                                                    fontWeight: FontWeight.w600,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 8),
+                                      Wrap(
+                                        spacing: 8,
+                                        runSpacing: 4,
+                                        children: [
+                                          Chip(
+                                            label: Text(
+                                              active ? 'Active' : 'Inactive',
+                                              style: const TextStyle(
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w700,
                                               ),
                                             ),
-                                  ),
-                                ),
-                                title: Text(
-                                  title,
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w900,
-                                  ),
-                                ),
-                                subtitle: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text('Date: $date'),
-                                    const SizedBox(height: 4),
-                                    Wrap(
-                                      spacing: 8,
-                                      runSpacing: 4,
-                                      children: [
-                                        Chip(
-                                          label: Text(
-                                            active ? 'Active' : 'Inactive',
-                                            style: const TextStyle(
-                                              fontSize: 12,
-                                              fontWeight: FontWeight.w700,
+                                            padding: EdgeInsets.zero,
+                                            backgroundColor:
+                                                active
+                                                    ? const Color(0xFFE8F5E9)
+                                                    : const Color(0xFFFFEBEE),
+                                          ),
+                                          Chip(
+                                            label: Text(
+                                              _isHttpImageUrl(imageUrl)
+                                                  ? 'Image ready'
+                                                  : 'No image',
+                                              style: const TextStyle(
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w700,
+                                              ),
+                                            ),
+                                            padding: EdgeInsets.zero,
+                                            backgroundColor: const Color(
+                                              0xFFE3F2FD,
                                             ),
                                           ),
-                                          padding: EdgeInsets.zero,
-                                          backgroundColor:
+                                        ],
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Text(
+                                        (e['description'] ?? e['message'] ?? '')
+                                            .toString(),
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                      const SizedBox(height: 8),
+                                      Row(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.end,
+                                        children: [
+                                          IconButton(
+                                            tooltip: 'Preview',
+                                            icon: const Icon(
+                                              Icons.visibility_outlined,
+                                            ),
+                                            onPressed: () =>
+                                                _previewEvent(context, d.id, e),
+                                          ),
+                                          IconButton(
+                                            tooltip: active
+                                                ? 'Set inactive'
+                                                : 'Set active',
+                                            icon: Icon(
                                               active
-                                                  ? const Color(0xFFE8F5E9)
-                                                  : const Color(0xFFFFEBEE),
-                                        ),
-                                        Chip(
-                                          label: Text(
-                                            _isHttpImageUrl(imageUrl)
-                                                ? 'Image ready'
-                                                : 'No image',
-                                            style: const TextStyle(
-                                              fontSize: 12,
-                                              fontWeight: FontWeight.w700,
+                                                  ? Icons.toggle_on_outlined
+                                                  : Icons.toggle_off_outlined,
+                                            ),
+                                            onPressed: () => _toggleEventActive(
+                                              context,
+                                              d.id,
+                                              active,
                                             ),
                                           ),
-                                          padding: EdgeInsets.zero,
-                                          backgroundColor: const Color(
-                                            0xFFE3F2FD,
+                                          IconButton(
+                                            icon: const Icon(
+                                              Icons.edit_outlined,
+                                            ),
+                                            onPressed: () => _addOrEditEvent(
+                                              context,
+                                              eventId: d.id,
+                                              data: e,
+                                            ),
                                           ),
-                                        ),
-                                      ],
-                                    ),
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      (e['description'] ?? e['message'] ?? '')
-                                          .toString(),
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ],
-                                ),
-                                trailing: Wrap(
-                                  children: [
-                                    IconButton(
-                                      tooltip: 'Preview',
-                                      icon: const Icon(
-                                        Icons.visibility_outlined,
+                                          IconButton(
+                                            icon: const Icon(
+                                              Icons.delete_outline,
+                                            ),
+                                            onPressed: () =>
+                                                _deleteEvent(context, d.id, title),
+                                          ),
+                                        ],
                                       ),
-                                      onPressed:
-                                          () => _previewEvent(context, d.id, e),
-                                    ),
-                                    IconButton(
-                                      tooltip:
-                                          active
-                                              ? 'Set inactive'
-                                              : 'Set active',
-                                      icon: Icon(
-                                        active
-                                            ? Icons.toggle_on_outlined
-                                            : Icons.toggle_off_outlined,
-                                      ),
-                                      onPressed:
-                                          () => _toggleEventActive(
-                                            context,
-                                            d.id,
-                                            active,
-                                          ),
-                                    ),
-                                    IconButton(
-                                      icon: const Icon(Icons.edit_outlined),
-                                      onPressed:
-                                          () => _addOrEditEvent(
-                                            context,
-                                            eventId: d.id,
-                                            data: e,
-                                          ),
-                                    ),
-                                    IconButton(
-                                      icon: const Icon(Icons.delete_outline),
-                                      onPressed:
-                                          () => _deleteEvent(
-                                            context,
-                                            d.id,
-                                            title,
-                                          ),
-                                    ),
-                                  ],
+                                    ],
+                                  ),
                                 ),
                               ),
                             );

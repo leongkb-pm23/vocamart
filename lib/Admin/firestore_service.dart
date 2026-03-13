@@ -58,14 +58,17 @@ class FirestoreService {
     }
   }
 
+  Future<bool> currentUserIsGuest() async {
+    final user = _currentUser;
+    return user == null || user.isAnonymous;
+  }
+
   Future<String> currentRole() async {
     final user = _currentUser;
     if (user == null) return 'guest';
     if (user.isAnonymous) return 'guest';
 
-    final isAdmin = await _safeDocExists(
-      _db.collection('admins').doc(user.uid),
-    );
+    final isAdmin = await _safeDocExists(_db.collection('admins').doc(user.uid));
     if (isAdmin) return 'admin';
 
     final isDelivery = await _safeDocExists(
@@ -123,6 +126,38 @@ class FirestoreService {
     return 'image/jpeg';
   }
 
+  List<String> _buildSearchKeywords({
+    required String name,
+    required String category,
+    required String description,
+    required String unit,
+  }) {
+    final keywords = <String>{};
+
+    void addWords(String text) {
+      final clean = text.trim().toLowerCase();
+      if (clean.isEmpty) return;
+
+      keywords.add(clean);
+
+      final parts = clean
+          .split(RegExp(r'[^a-z0-9]+'))
+          .map((e) => e.trim())
+          .where((e) => e.isNotEmpty);
+
+      for (final p in parts) {
+        keywords.add(p);
+      }
+    }
+
+    addWords(name);
+    addWords(category);
+    addWords(description);
+    addWords(unit);
+
+    return keywords.toList()..sort();
+  }
+
   Future<String> uploadImageXFile({
     required XFile file,
     required String folder,
@@ -173,9 +208,8 @@ class FirestoreService {
   }
 
   Stream<QuerySnapshot<Map<String, dynamic>>> promosStream({String? storeId}) {
-    Query<Map<String, dynamic>> q = _db
-        .collection('store_promotions')
-        .orderBy('endAt', descending: false);
+    Query<Map<String, dynamic>> q =
+    _db.collection('store_promotions').orderBy('endAt', descending: false);
 
     if (storeId != null && storeId != 'all') {
       q = q.where('storeId', isEqualTo: storeId);
@@ -340,14 +374,29 @@ class FirestoreService {
         ? _db.collection('products').doc()
         : _db.collection('products').doc(trimmedId);
 
+    final cleanName = name.trim();
+    final cleanUnit = unit.trim();
+    final cleanCategory = category.trim();
+    final cleanDescription = (description ?? '').trim();
+    final cleanImageUrl = (imageUrl ?? '').trim();
+
+    final searchKeywords = _buildSearchKeywords(
+      name: cleanName,
+      category: cleanCategory,
+      description: cleanDescription,
+      unit: cleanUnit,
+    );
+
     await ref.set({
-      'name': name,
-      'nameLower': name.toLowerCase(),
-      'unit': unit,
-      'category': category,
+      'name': cleanName,
+      'nameLower': cleanName.toLowerCase(),
+      'unit': cleanUnit,
+      'category': cleanCategory,
+      'categoryLower': cleanCategory.toLowerCase(),
       'quantity': quantity,
-      'description': (description ?? '').trim(),
-      'imageUrl': (imageUrl ?? '').trim(),
+      'description': cleanDescription,
+      'imageUrl': cleanImageUrl,
+      'searchKeywords': searchKeywords,
       'updatedAt': FieldValue.serverTimestamp(),
       if (trimmedId.isEmpty) 'createdAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
@@ -358,11 +407,7 @@ class FirestoreService {
   }
 
   Stream<QuerySnapshot<Map<String, dynamic>>> pricesStream(String productId) {
-    return _db
-        .collection('products')
-        .doc(productId)
-        .collection('prices')
-        .snapshots();
+    return _db.collection('products').doc(productId).collection('prices').snapshots();
   }
 
   Future<void> upsertPrice({
@@ -545,10 +590,7 @@ class FirestoreService {
         'createdAt': FieldValue.serverTimestamp(),
       });
     } else {
-      await _db
-          .collection('events')
-          .doc(eventId)
-          .set(data, SetOptions(merge: true));
+      await _db.collection('events').doc(eventId).set(data, SetOptions(merge: true));
     }
   }
 
@@ -556,10 +598,6 @@ class FirestoreService {
     await _db.collection('events').doc(eventId).delete();
   }
 
-  // IMPORTANT:
-  // Do not order collectionGroup('orders') by createdAt descending here,
-  // because that requires a special Firestore composite index.
-  // This safer stream avoids the sudden crash.
   Stream<QuerySnapshot<Map<String, dynamic>>> ordersAllStream() {
     return _db.collectionGroup('orders').snapshots();
   }
@@ -573,8 +611,7 @@ class FirestoreService {
     final result = <QueryDocumentSnapshot<Map<String, dynamic>>>[];
 
     for (int i = 0; i < users.docs.length; i += batchSize) {
-      final end =
-      (i + batchSize > users.docs.length)
+      final end = (i + batchSize > users.docs.length)
           ? users.docs.length
           : i + batchSize;
       final batch = users.docs.sublist(i, end);

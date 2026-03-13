@@ -14,10 +14,10 @@ import 'package:flutter_image_slideshow/flutter_image_slideshow.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 
 import 'package:fyp/User/account_page.dart';
-import 'package:fyp/User/activities_page.dart';
 import 'package:fyp/components/app_store.dart';
 import 'package:fyp/User/camera_search_page.dart';
 import 'package:fyp/User/cart_page.dart';
+import 'package:fyp/User/top_menu_page.dart';
 import 'package:fyp/User/help_center_page.dart';
 import 'package:fyp/User/likes_page.dart';
 import 'package:fyp/User/login.dart';
@@ -69,7 +69,9 @@ class _HomePageState extends State<HomePage> {
   bool _voiceInitInProgress = false;
   DateTime? _lastVoiceErrorAt;
   Timer? _voiceRestartTimer;
+  Timer? _voiceSessionTimer;
   String? _voiceLocaleId;
+  static const Duration _voiceSessionDuration = Duration(seconds: 25);
   static const String _wakePhrase = 'hey vocamart';
   static const String _wakePhraseAlt = 'hey voca mart';
 
@@ -130,18 +132,39 @@ class _HomePageState extends State<HomePage> {
   void initState() {
     super.initState();
     _redirectDeliveryIfNeeded();
-    if (!_isGuest()) {
-      _manualVoiceRequest = true;
-      _initVoiceAssistant();
-    }
+    if (!_isGuest()) _initVoiceAssistant();
   }
 
   @override
   void dispose() {
     _voiceRestartTimer?.cancel();
+    _voiceSessionTimer?.cancel();
     _speech.stop();
     _speech.cancel();
     super.dispose();
+  }
+
+  void _startVoiceSessionTimer() {
+    _voiceSessionTimer?.cancel();
+    _voiceSessionTimer = Timer(_voiceSessionDuration, () async {
+      if (!mounted) return;
+      _manualVoiceRequest = false;
+      _awaitingCommand = false;
+      await _pauseVoiceAssistant();
+      if (!mounted) return;
+      _showSnack('Voice assistant off. Tap mic again to listen.');
+    });
+  }
+
+  Future<void> _stopVoiceSession({bool notify = false}) async {
+    _voiceSessionTimer?.cancel();
+    _voiceSessionTimer = null;
+    _manualVoiceRequest = false;
+    _awaitingCommand = false;
+    await _pauseVoiceAssistant();
+    if (notify && mounted) {
+      _showSnack('Voice assistant off.');
+    }
   }
 
   Future<void> _redirectDeliveryIfNeeded() async {
@@ -508,6 +531,41 @@ class _HomePageState extends State<HomePage> {
             return;
           }
 
+          // In manual mic session, allow direct command.
+          // If wake phrase is present, strip it before dispatching command.
+          if (result.finalResult && _manualVoiceRequest) {
+            final commandFromWake = _extractCommandAfterWakePhrase(spoken);
+            if (commandFromWake.isNotEmpty) {
+              _handlingVoiceResult = true;
+              _speech.stop();
+              setState(() {
+                _voiceListening = false;
+              });
+              _handleVoiceCommand(commandFromWake).whenComplete(() {
+                _handlingVoiceResult = false;
+                _restartAssistantListening();
+              });
+              return;
+            }
+
+            if (_hasWakePhrase(spoken)) {
+              _awaitingCommand = true;
+              _showSnack('Hey VocaMart detected. Say your command.');
+              return;
+            }
+
+            _handlingVoiceResult = true;
+            _speech.stop();
+            setState(() {
+              _voiceListening = false;
+            });
+            _handleVoiceCommand(spoken).whenComplete(() {
+              _handlingVoiceResult = false;
+              _restartAssistantListening();
+            });
+            return;
+          }
+
           if (_hasWakePhrase(spoken)) {
             final directCommand = _extractCommandAfterWakePhrase(spoken);
             if (directCommand.isNotEmpty) {
@@ -568,6 +626,12 @@ class _HomePageState extends State<HomePage> {
       return;
     }
 
+    // Toggle behavior: tap once to start a short listening session, tap again to stop.
+    if (_manualVoiceRequest) {
+      await _stopVoiceSession(notify: true);
+      return;
+    }
+
     if (!_voiceReady) {
       await _initVoiceAssistant();
       if (!_voiceReady) {
@@ -580,6 +644,7 @@ class _HomePageState extends State<HomePage> {
 
     _manualVoiceRequest = true;
     _awaitingCommand = false;
+    _startVoiceSessionTimer();
     if (_voiceListening) {
       try {
         await _speech.stop();
@@ -590,7 +655,9 @@ class _HomePageState extends State<HomePage> {
       });
     }
 
-    _showSnack('Voice assistant on. Say "Hey VocaMart" then your command.');
+    _showSnack(
+      'Voice assistant on for ${_voiceSessionDuration.inSeconds}s. Say "Hey VocaMart" then your command.',
+    );
     await _restartAssistantListening();
   }
 
@@ -699,7 +766,7 @@ class _HomePageState extends State<HomePage> {
                   _openCamera(context);
                 },
                 onList: () {
-                  _openPage(const ActivitiesPage());
+                  _openPage(const TopMenuPage());
                 },
                 onCart: () {
                   _openPage(const CartPage());

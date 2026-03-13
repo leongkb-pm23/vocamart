@@ -8,10 +8,12 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'package:fyp/components/app_store.dart';
 import 'package:fyp/User/detail_ui.dart';
 import 'package:fyp/User/payment_verification_page.dart';
+import 'package:fyp/services/billplz_payment_service.dart';
 
 class _CheckoutAddress {
   final String id;
@@ -142,6 +144,7 @@ class _CartPageState extends State<CartPage> {
   String? _selectedAddressId;
   String? _selectedPaymentId;
   String _selectedAddressPreview = '';
+  final BillplzPaymentService _billplz = BillplzPaymentService();
 
   bool _isGuestUser() {
     final user = FirebaseAuth.instance.currentUser;
@@ -738,28 +741,204 @@ class _CartPageState extends State<CartPage> {
       return;
     }
 
-    OrderItem? order;
-    try {
-      order = await store.checkout(
-        paymentMethod: method,
-        deliveryAddressOverride: deliveryAddress,
-      );
-    } on StateError catch (e) {
-      if (!context.mounted) return;
-      _showSnack(context, e.message);
-      return;
-    } on FirebaseException catch (e) {
-      if (!context.mounted) return;
-      _showSnack(context, 'Checkout failed: ${e.message ?? e.code}');
-      return;
-    } catch (e) {
-      if (!context.mounted) return;
-      _showSnack(context, 'Checkout failed: $e');
+    final user = FirebaseAuth.instance.currentUser;
+    final email = (user?.email ?? '').trim();
+    final mobile = (user?.phoneNumber ?? '').trim();
+    final preOrderId = 'PRE-${DateTime.now().millisecondsSinceEpoch}';
+    final fallbackEmail = 'order-${preOrderId.toLowerCase()}@vocamart.local';
+    final contactEmail = email.isNotEmpty ? email : (mobile.isEmpty ? fallbackEmail : '');
+    final customerName = user?.displayName?.trim().isNotEmpty == true
+        ? user!.displayName!.trim()
+        : 'Customer';
+    final amountToPay = store.payableTotal + store.estimateDeliveryFee(
+      deliveryAddress: deliveryAddress,
+    );
+    if (amountToPay <= 0) {
+      _showSnack(context, 'Invalid checkout total.');
       return;
     }
-    if (order == null || !context.mounted) return;
-    _showSnack(context, 'Checkout success: ${order.id}');
-    Navigator.pop(context);
+
+    _showSnack(context, 'Card verified. Creating Billplz payment...');
+
+    final backendOk = await _billplz.healthCheck();
+    if (!context.mounted) return;
+    if (!backendOk) {
+      await showDialog<void>(
+        context: context,
+        builder: (dCtx) {
+          return AlertDialog(
+            title: const Text('Payment Backend Unreachable'),
+            content: const Text(
+              'Cannot reach payment backend from this device. Check PAYMENT_API_BASE_URL, backend server, and Wi-Fi/firewall.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dCtx),
+                child: const Text('OK'),
+              ),
+            ],
+          );
+        },
+      );
+      return;
+    }
+
+    final created = await _billplz.createBill(
+      orderId: preOrderId,
+      name: customerName,
+      email: contactEmail,
+      mobile: mobile,
+      amountRm: amountToPay,
+      description: 'Order $preOrderId',
+    );
+    debugPrint(
+      'Billplz create result: success=${created.success}, billId=${created.billId}, billUrl=${created.billUrl}, error=${created.error}',
+    );
+
+    if (!context.mounted) return;
+    if (!created.success || created.billId == null || created.billUrl == null) {
+      await showDialog<void>(
+        context: context,
+        builder: (dCtx) {
+          return AlertDialog(
+            title: const Text('Billplz Create Bill Failed'),
+            content: Text(
+              created.error ??
+                  'Billplz bill creation failed. Check backend URL/env configuration.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dCtx),
+                child: const Text('OK'),
+              ),
+            ],
+          );
+        },
+      );
+      return;
+    }
+
+    final opened = await _billplz.openBillUrl(created.billUrl!);
+    if (!context.mounted) return;
+    if (!opened) {
+      await showDialog<void>(
+        context: context,
+        builder: (dCtx) {
+          return AlertDialog(
+            title: const Text('Unable To Open Billplz'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Automatic open failed. Copy the Billplz URL and open it in your browser.',
+                ),
+                const SizedBox(height: 8),
+                SelectableText(created.billUrl!),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () async {
+                  await Clipboard.setData(ClipboardData(text: created.billUrl!));
+                  if (!dCtx.mounted) return;
+                  ScaffoldMessenger.of(dCtx).showSnackBar(
+                    const SnackBar(content: Text('Billplz link copied.')),
+                  );
+                },
+                child: const Text('Copy Link'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(dCtx),
+                child: const Text('Close'),
+              ),
+            ],
+          );
+        },
+      );
+    }
+
+    if (!context.mounted) return;
+    final checkNow = await showDialog<bool>(
+      context: context,
+      builder: (dCtx) {
+        return AlertDialog(
+          title: const Text('Billplz Payment Opened'),
+          content: const Text(
+            'Complete payment in Billplz page, then press "Check Payment Status".',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dCtx, false),
+              child: const Text('Later'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(dCtx, true),
+              child: const Text('Check Payment Status'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (checkNow == true) {
+      final latest = await _billplz.fetchBill(created.billId!);
+      if (!context.mounted) return;
+
+      final paid = latest.paid == true;
+      final state = (latest.state ?? '').toLowerCase();
+      final paymentStatus = paid
+          ? 'paid'
+          : (state == 'expired' || state == 'cancelled' || state == 'failed')
+              ? 'failed'
+              : 'pending';
+
+      if (paymentStatus == 'paid') {
+        OrderItem? finalOrder;
+        try {
+          finalOrder = await store.checkout(
+            paymentMethod: method,
+            deliveryAddressOverride: deliveryAddress,
+          );
+        } on StateError catch (e) {
+          if (!context.mounted) return;
+          _showSnack(context, e.message);
+          return;
+        } on FirebaseException catch (e) {
+          if (!context.mounted) return;
+          _showSnack(context, 'Checkout failed: ${e.message ?? e.code}');
+          return;
+        } catch (e) {
+          if (!context.mounted) return;
+          _showSnack(context, 'Checkout failed: $e');
+          return;
+        }
+        if (finalOrder == null || !context.mounted) return;
+
+        await store.updateOrderPayment(
+          orderId: finalOrder.id,
+          paymentStatus: 'paid',
+          billId: created.billId,
+          billUrl: created.billUrl,
+          billState: latest.state ?? created.state,
+        );
+        await store.updateOrderStatus(finalOrder.id, 'To Ship');
+        if (!context.mounted) return;
+        _showSnack(context, 'Payment successful for order ${finalOrder.id}.');
+        if (!context.mounted) return;
+        Navigator.pushNamedAndRemoveUntil(context, '/home', (route) => false);
+        return;
+      } else if (paymentStatus == 'failed') {
+        _showSnack(context, 'Payment failed/expired.');
+      } else {
+        _showSnack(context, 'Payment still pending.');
+      }
+    } else {
+      if (!context.mounted) return;
+      _showSnack(context, 'Payment link is ready. Complete payment later.');
+    }
+
+    // Keep user in cart when payment is pending/failed.
   }
 
   @override
@@ -1316,13 +1495,21 @@ class _CartPageState extends State<CartPage> {
                                         const SizedBox(width: 8),
                                         const Expanded(
                                           child: Text(
-                                            'Payment Method',
+                                            'Payment Method (Card Verification)',
                                             style: TextStyle(
                                               fontWeight: FontWeight.w900,
                                               color: CartPage.kOrange,
                                             ),
                                           ),
                                         ),
+                                        const Text(
+                                          'Billplz',
+                                          style: TextStyle(
+                                            fontWeight: FontWeight.w900,
+                                            color: CartPage.kOrange,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 8),
                                         TextButton(
                                           onPressed:
                                               isGuestUser
@@ -1335,6 +1522,14 @@ class _CartPageState extends State<CartPage> {
                                           child: const Text('Manage Cards'),
                                         ),
                                       ],
+                                    ),
+                                    const Text(
+                                      'Checkout flow: verify selected card by voice, then pay on Billplz.',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w700,
+                                        color: Colors.black54,
+                                      ),
                                     ),
                                     if (isGuestUser)
                                       const Text(

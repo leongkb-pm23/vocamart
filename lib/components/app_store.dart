@@ -1209,7 +1209,7 @@ class AppStore extends ChangeNotifier {
       createdAt: now,
       items: items,
       total: finalTotal,
-      status: 'To Ship',
+      status: 'Payment Pending',
       subtotal: subtotal,
       discount: discount,
       customerName: customerName,
@@ -1282,6 +1282,7 @@ class AppStore extends ChangeNotifier {
           'paymentMethodId': paymentMethod?.id,
           'paymentType': paymentMethod?.type,
           'paymentLast4': paymentMethod?.last4,
+          'paymentStatus': 'pending',
           'items': _orderItemsToMap(order.items),
         });
 
@@ -1321,6 +1322,29 @@ class AppStore extends ChangeNotifier {
     }, SetOptions(merge: true));
 
     await _log('Order $orderId -> $status');
+  }
+
+  Future<void> updateOrderPayment({
+    required String orderId,
+    required String paymentStatus,
+    String? billId,
+    String? billUrl,
+    String? billState,
+  }) async {
+    final uid = _uid;
+    if (uid == null) return;
+
+    await _userDoc(uid).collection('orders').doc(orderId).set({
+      'paymentStatus': paymentStatus,
+      'paymentGateway': 'billplz',
+      if (billId != null && billId.trim().isNotEmpty) 'paymentBillId': billId.trim(),
+      if (billUrl != null && billUrl.trim().isNotEmpty) 'paymentBillUrl': billUrl.trim(),
+      if (billState != null && billState.trim().isNotEmpty) 'paymentBillState': billState.trim(),
+      if (paymentStatus == 'paid') 'paidAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+
+    await _log('Order $orderId payment -> $paymentStatus');
   }
 
   List<OrderItem> ordersByStatus(String status) {
@@ -1422,12 +1446,106 @@ class AppStore extends ChangeNotifier {
 
   Future<VoiceCommandResult> handleVoiceCommand(String rawCommand) async {
     // Normalize input once to make matching consistent.
-    final cmd = rawCommand.trim().toLowerCase();
+    var cmd = rawCommand.trim().toLowerCase();
+    cmd = cmd.replaceAll(RegExp(r'[^a-z0-9\s]'), ' ');
+    cmd = cmd.replaceAll(RegExp(r'\s+'), ' ').trim();
+
+    // Ignore wake phrase prefix when user says "hey vocamart <command>".
+    for (final wake in const [
+      'hey vocamart',
+      'hey voca mart',
+      'hey voka mart',
+      'hey voca mark',
+      'hey voka mark',
+    ]) {
+      if (cmd == wake) {
+        return const VoiceCommandResult(
+          handled: true,
+          message: 'Hey VocaMart detected. Please say your command.',
+        );
+      }
+      final prefix = '$wake ';
+      if (cmd.startsWith(prefix)) {
+        cmd = cmd.substring(prefix.length).trim();
+        break;
+      }
+    }
+
     if (cmd.isEmpty) {
       return const VoiceCommandResult(
         handled: false,
         message: 'Please say a command.',
       );
+    }
+
+    String collapseNoSpace(String text) {
+      return text.replaceAll(' ', '');
+    }
+
+    bool hasWords(String text, List<String> words) {
+      final parts = text.split(' ');
+      for (final w in words) {
+        if (!parts.contains(w)) return false;
+      }
+      return true;
+    }
+
+    String normText(String text) {
+      return text
+          .toLowerCase()
+          .replaceAll(RegExp(r'[^a-z0-9\s]'), ' ')
+          .replaceAll(RegExp(r'\s+'), ' ')
+          .trim();
+    }
+
+    List<String> tokensOf(String text) {
+      final normalized = normText(text);
+      if (normalized.isEmpty) return const <String>[];
+      return normalized.split(' ');
+    }
+
+    ProductItem? bestProductMatch(String query) {
+      final qNorm = normText(query);
+      if (qNorm.isEmpty) return null;
+      final qTokens = tokensOf(qNorm).toSet();
+
+      ProductItem? best;
+      int bestScore = -1;
+
+      for (final item in _products) {
+        final nameNorm = normText(item.name);
+        if (nameNorm.isEmpty) continue;
+
+        int score = 0;
+        if (nameNorm == qNorm) {
+          score += 10000;
+        } else {
+          if (nameNorm.contains(qNorm)) score += 3000;
+          if (qNorm.contains(nameNorm)) score += 2500;
+        }
+
+        final nameTokens = tokensOf(nameNorm).toSet();
+        int overlap = 0;
+        for (final t in qTokens) {
+          if (nameTokens.contains(t)) overlap += 1;
+        }
+        score += overlap * 500;
+
+        if (qTokens.isNotEmpty) {
+          final ratio = overlap / qTokens.length;
+          if (ratio >= 0.75) score += 1000;
+          if (ratio >= 0.50) score += 500;
+        }
+
+        if (score > bestScore) {
+          bestScore = score;
+          best = item;
+        }
+      }
+
+      // Avoid random matches when query has no meaningful overlap.
+      if (bestScore < 500) return null;
+      return best;
     }
 
     if (cmd.contains('show vegetable') || cmd.contains('show vegetables')) {
@@ -1461,7 +1579,17 @@ class AppStore extends ChangeNotifier {
       }
     }
 
-    if (cmd == 'checkout') {
+    final compact = collapseNoSpace(cmd);
+    final isCheckoutCommand =
+        compact == 'checkout' ||
+        cmd == 'check out' ||
+        cmd == 'go checkout' ||
+        cmd == 'go to checkout' ||
+        cmd == 'open checkout' ||
+        cmd == 'proceed checkout' ||
+        cmd == 'proceed to checkout';
+
+    if (isCheckoutCommand) {
       return VoiceCommandResult(
         handled: true,
         message:
@@ -1544,7 +1672,34 @@ class AppStore extends ChangeNotifier {
       );
     }
 
-    if (cmd.startsWith('add to cart')) {
+    String? addToCartPrefix;
+    for (final prefix in const [
+      'add to cart',
+      'add to card',
+      'add cart',
+      'add card',
+      'add two cart',
+      'add two card',
+      'add into cart',
+      'add into card',
+      'put in cart',
+      'put in card',
+      'put into cart',
+      'put into card',
+    ]) {
+      if (cmd.startsWith(prefix)) {
+        addToCartPrefix = prefix;
+        break;
+      }
+    }
+
+    // Handle speech variants like "please add broccoli to cart".
+    if (addToCartPrefix == null &&
+        (hasWords(cmd, ['add', 'cart']) || hasWords(cmd, ['put', 'cart']))) {
+      addToCartPrefix = '';
+    }
+
+    if (addToCartPrefix != null) {
       if (_isGuestUser) {
         return const VoiceCommandResult(
           handled: true,
@@ -1552,26 +1707,36 @@ class AppStore extends ChangeNotifier {
         );
       }
       // Support both "add to cart broccoli" and plain "add to cart".
-      final productText = cmd.replaceFirst('add to cart', '').trim();
+      String productText = cmd;
+      if (addToCartPrefix.isNotEmpty) {
+        productText = cmd.replaceFirst(addToCartPrefix, '').trim();
+      }
+      productText = productText
+          .replaceAll(
+            RegExp(
+              r'\b(add|to|two|into|in|put|cart|card|please|my|the|a|an)\b',
+            ),
+            ' ',
+          )
+          .replaceAll(RegExp(r'\s+'), ' ')
+          .trim();
       ProductItem? p;
 
       if (productText.isNotEmpty) {
-        // Find first partial-name match.
-        for (final item in _products) {
-          if (item.name.toLowerCase().contains(productText)) {
-            p = item;
-            break;
-          }
-        }
+        // Fuzzy matching helps with speech recognition variations.
+        p = bestProductMatch(productText);
       } else if (_recentlyViewed.isNotEmpty) {
         // If product name not spoken, fallback to most recently viewed product.
         p = productById(_recentlyViewed.first);
       }
 
       if (p == null) {
-        return const VoiceCommandResult(
+        return VoiceCommandResult(
           handled: true,
-          message: 'No product found for add to cart command.',
+          message:
+              productText.isEmpty
+                  ? 'No product found for add to cart command.'
+                  : 'No product found for "$productText".',
         );
       }
 

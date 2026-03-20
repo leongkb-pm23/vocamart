@@ -5,13 +5,13 @@
 
 // File purpose: This file handles detail ui screen/logic.
 
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import 'package:fyp/components/app_store.dart';
 import 'package:fyp/Admin/firestore_service.dart';
+import 'package:fyp/components/app_store.dart';
 
 // This class defines ProductDetailPage, used for this page/feature.
 class ProductDetailPage extends StatelessWidget {
@@ -38,9 +38,9 @@ class ProductDetailPage extends StatelessWidget {
   }
 
   void _showGuestBlocked(BuildContext context, String action) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Please login to $action.')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('Please login to $action.')));
   }
 
   List<Widget> _priceRows(ProductItem currentProduct) {
@@ -59,7 +59,9 @@ class ProductDetailPage extends StatelessWidget {
             children: [
               Expanded(
                 child: Text(
-                  priceItem.store,
+                  priceItem.distanceKm == null
+                      ? priceItem.store
+                      : '${priceItem.store} (${priceItem.distanceKm!.toStringAsFixed(1)} km)',
                   style: const TextStyle(fontWeight: FontWeight.w800),
                 ),
               ),
@@ -67,9 +69,10 @@ class ProductDetailPage extends StatelessWidget {
                 'RM ${priceItem.price.toStringAsFixed(2)}',
                 style: TextStyle(
                   fontWeight: FontWeight.w900,
-                  color: priceItem.price == currentProduct.lowestPrice
-                      ? kOrange
-                      : Colors.black,
+                  color:
+                      priceItem.price == currentProduct.lowestPrice
+                          ? kOrange
+                          : Colors.black,
                 ),
               ),
             ],
@@ -183,7 +186,10 @@ class ProductDetailPage extends StatelessWidget {
                   ),
                 ],
                 const SizedBox(height: 10),
-                Text(liveProduct.description, style: const TextStyle(height: 1.3)),
+                Text(
+                  liveProduct.description,
+                  style: const TextStyle(height: 1.3),
+                ),
                 const SizedBox(height: 16),
                 const Text(
                   'Price Comparison',
@@ -338,18 +344,22 @@ class ProductDetailPage extends StatelessWidget {
                           }
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
-                              content: Text('${liveProduct.name} added to cart'),
+                              content: Text(
+                                '${liveProduct.name} added to cart',
+                              ),
                             ),
                           );
                         },
                         icon: const Icon(Icons.add_shopping_cart),
-                        label: Text(outOfStock ? 'Out of Stock' : 'Add to Cart'),
+                        label: Text(
+                          outOfStock ? 'Out of Stock' : 'Add to Cart',
+                        ),
                       ),
                     ),
                   ],
                 ),
                 const SizedBox(height: 18),
-                _ReviewSection(product: liveProduct),
+                _ProductReviewsList(productId: liveProduct.id),
               ],
             ),
           ),
@@ -359,121 +369,15 @@ class ProductDetailPage extends StatelessWidget {
   }
 }
 
-// This class defines _ReviewSection, used for this page/feature.
-class _ReviewSection extends StatefulWidget {
-  final ProductItem product;
-  const _ReviewSection({required this.product});
+class _ProductReviewsList extends StatelessWidget {
+  final String productId;
+
+  const _ProductReviewsList({required this.productId});
 
   @override
-  State<_ReviewSection> createState() => _ReviewSectionState();
-}
-
-// This class defines _ReviewSectionState, used for this page/feature.
-class _ReviewSectionState extends State<_ReviewSection> {
-  final _svc = FirestoreService();
-  final _commentCtrl = TextEditingController();
-  int _rating = 5;
-  bool _saving = false;
-
-  void _showSnack(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
-  }
-
-  Future<void> _submitReview() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null || user.isAnonymous) {
-      _showSnack('Please login to submit a review.');
-      return;
-    }
-
-    final comment = _commentCtrl.text.trim();
-    if (comment.isEmpty) {
-      _showSnack('Review comment cannot be empty.');
-      return;
-    }
-
-    setState(() {
-      _saving = true;
-    });
-    await _svc.upsertReview(
-      productId: widget.product.id,
-      productName: widget.product.name,
-      rating: _rating,
-      comment: comment,
-    );
-
-    if (!mounted) return;
-    _commentCtrl.clear();
-    setState(() {
-      _saving = false;
-    });
-  }
-
-  List<QueryDocumentSnapshot<Map<String, dynamic>>> _filteredDocs(
-    QuerySnapshot<Map<String, dynamic>> snap,
-  ) {
-    final result = <QueryDocumentSnapshot<Map<String, dynamic>>>[];
-    for (final doc in snap.docs) {
-      final data = doc.data();
-      final productId = (data['productId'] ?? '').toString();
-      final status = (data['status'] ?? 'published').toString();
-      if (productId == widget.product.id && status == 'published') {
-        result.add(doc);
-      }
-    }
-    return result;
-  }
-
-  List<Widget> _reviewCards(
-    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
-  ) {
-    final cards = <Widget>[];
-    final count = docs.length < 5 ? docs.length : 5;
-    for (var i = 0; i < count; i++) {
-      final data = docs[i].data();
-      final rating = (data['rating'] is num) ? (data['rating'] as num).toInt() : 0;
-      cards.add(
-        Container(
-          margin: const EdgeInsets.only(bottom: 8),
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: const Color(0xFFE6E6E6)),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                (data['userEmail'] ?? 'User').toString(),
-                style: const TextStyle(fontWeight: FontWeight.w800),
-              ),
-              Text('Rating: ${'*' * rating}'),
-              Text((data['comment'] ?? '').toString()),
-            ],
-          ),
-        ),
-      );
-    }
-    return cards;
-  }
-
-  List<DropdownMenuItem<int>> _ratingItems() {
-    final items = <DropdownMenuItem<int>>[];
-    for (var i = 1; i <= 5; i++) {
-      items.add(DropdownMenuItem<int>(value: i, child: Text('$i')));
-    }
-    return items;
-  }
-
-  @override
-  void dispose() {
-    _commentCtrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  // Builds and returns the UI for this widget.
   Widget build(BuildContext context) {
+    final svc = FirestoreService();
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -486,45 +390,58 @@ class _ReviewSectionState extends State<_ReviewSection> {
           ),
         ),
         const SizedBox(height: 8),
-        Row(
-          children: [
-            const Text('Rating:'),
-            const SizedBox(width: 8),
-            DropdownButton<int>(
-              value: _rating,
-              items: _ratingItems(),
-              onChanged: (v) {
-                setState(() {
-                  _rating = v ?? 5;
-                });
-              },
-            ),
-          ],
-        ),
-        TextField(
-          controller: _commentCtrl,
-          maxLines: 3,
-          decoration: const InputDecoration(
-            hintText: 'Write feedback',
-            border: OutlineInputBorder(),
-          ),
-        ),
-        const SizedBox(height: 8),
-        ElevatedButton(
-          onPressed: _saving ? null : _submitReview,
-          child: const Text('Submit Review'),
-        ),
-        const SizedBox(height: 10),
         StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-          // Listen review collection live, then filter by this product id.
-          stream: _svc.reviewsStream(),
+          stream: svc.reviewsStream(),
           builder: (context, snap) {
-            if (!snap.hasData) return const SizedBox.shrink();
-            final docs = _filteredDocs(snap.data!);
+            if (!snap.hasData) {
+              return const SizedBox.shrink();
+            }
 
-            if (docs.isEmpty) return const Text('No reviews yet');
+            final rows = <QueryDocumentSnapshot<Map<String, dynamic>>>[];
+            for (final doc in snap.data!.docs) {
+              final data = doc.data();
+              final pid = (data['productId'] ?? '').toString().trim();
+              final status = (data['status'] ?? 'published').toString().trim();
+              if (pid == productId && status == 'published') {
+                rows.add(doc);
+              }
+            }
 
-            return Column(children: _reviewCards(docs));
+            if (rows.isEmpty) {
+              return const Text('No reviews yet');
+            }
+
+            final cards = <Widget>[];
+            final count = rows.length < 5 ? rows.length : 5;
+            for (var i = 0; i < count; i++) {
+              final data = rows[i].data();
+              final rating =
+                  (data['rating'] is num) ? (data['rating'] as num).toInt() : 0;
+              final stars = '*' * rating.clamp(0, 5);
+              cards.add(
+                Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: const Color(0xFFE6E6E6)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        (data['userEmail'] ?? 'User').toString(),
+                        style: const TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                      Text('Rating: $stars'),
+                      Text((data['comment'] ?? '').toString()),
+                    ],
+                  ),
+                ),
+              );
+            }
+
+            return Column(children: cards);
           },
         ),
       ],
@@ -565,6 +482,19 @@ class CardDetailPage extends StatelessWidget {
     if (!RegExp(r'^(0[1-9]|1[0-2])\/\d{2}$').hasMatch(value)) {
       return 'Expiry must be MM/YY.';
     }
+
+    final parts = value.split('/');
+    final month = int.parse(parts[0]);
+    final year2 = int.parse(parts[1]);
+    final now = DateTime.now();
+    final currentYear2 = now.year % 100;
+    final currentMonth = now.month;
+
+    if (year2 < currentYear2 ||
+        (year2 == currentYear2 && month < currentMonth)) {
+      return 'Card is expired.';
+    }
+
     return null;
   }
 
@@ -604,7 +534,9 @@ class CardDetailPage extends StatelessWidget {
                         controller: holderCtrl,
                         textInputAction: TextInputAction.next,
                         validator: (v) => _required(v, 'Card holder'),
-                        decoration: const InputDecoration(labelText: 'Card Holder'),
+                        decoration: const InputDecoration(
+                          labelText: 'Card Holder',
+                        ),
                       ),
                       TextFormField(
                         controller: numberCtrl,
@@ -615,7 +547,9 @@ class CardDetailPage extends StatelessWidget {
                           LengthLimitingTextInputFormatter(19),
                         ],
                         validator: _validateCardNumber,
-                        decoration: const InputDecoration(labelText: 'Card Number'),
+                        decoration: const InputDecoration(
+                          labelText: 'Card Number',
+                        ),
                       ),
                       TextFormField(
                         controller: expiryCtrl,
@@ -647,39 +581,43 @@ class CardDetailPage extends StatelessWidget {
               ),
               actions: [
                 TextButton(
-                  onPressed: saving
-                      ? null
-                      : () {
-                    Navigator.pop(dialogContext);
-                  },
+                  onPressed:
+                      saving
+                          ? null
+                          : () {
+                            Navigator.pop(dialogContext);
+                          },
                   child: const Text('Cancel'),
                 ),
                 ElevatedButton(
-                  onPressed: saving
-                      ? null
-                      : () async {
-                    if (!formKey.currentState!.validate()) return;
+                  onPressed:
+                      saving
+                          ? null
+                          : () async {
+                            if (!formKey.currentState!.validate()) return;
 
-                    final type = typeCtrl.text.trim();
-                    final holder = holderCtrl.text.trim();
-                    final raw = numberCtrl.text.trim();
-                    final expiry = expiryCtrl.text.trim();
+                            final type = typeCtrl.text.trim();
+                            final holder = holderCtrl.text.trim();
+                            final raw = numberCtrl.text.trim();
+                            final expiry = expiryCtrl.text.trim();
 
-                    final last4 = raw.substring(raw.length - 4);
-                    setDialogState(() => saving = true);
-                    await AppStore.instance.addPaymentMethod(
-                      PaymentMethodItem(
-                        id: DateTime.now().millisecondsSinceEpoch.toString(),
-                        type: type,
-                        holderName: holder,
-                        last4: last4,
-                        expiry: expiry,
-                      ),
-                    );
-                    if (dialogContext.mounted) {
-                      Navigator.pop(dialogContext);
-                    }
-                  },
+                            final last4 = raw.substring(raw.length - 4);
+                            setDialogState(() => saving = true);
+                            await AppStore.instance.addPaymentMethod(
+                              PaymentMethodItem(
+                                id:
+                                    DateTime.now().millisecondsSinceEpoch
+                                        .toString(),
+                                type: type,
+                                holderName: holder,
+                                last4: last4,
+                                expiry: expiry,
+                              ),
+                            );
+                            if (dialogContext.mounted) {
+                              Navigator.pop(dialogContext);
+                            }
+                          },
                   child: Text(saving ? 'Saving...' : 'Save'),
                 ),
               ],
@@ -762,11 +700,14 @@ class CardDetailPage extends StatelessWidget {
                                 onPressed: () async {
                                   if (ctrl.text.trim().isEmpty) {
                                     setDialogState(() {
-                                      errorText = 'Voice phrase cannot be empty.';
+                                      errorText =
+                                          'Voice phrase cannot be empty.';
                                     });
                                     return;
                                   }
-                                  await store.setPaymentPhrase(ctrl.text.trim());
+                                  await store.setPaymentPhrase(
+                                    ctrl.text.trim(),
+                                  );
                                   if (context.mounted) {
                                     Navigator.pop(dialogContext);
                                   }
@@ -833,6 +774,3 @@ class CardDetailPage extends StatelessWidget {
     );
   }
 }
-
-
-

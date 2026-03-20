@@ -458,7 +458,9 @@ class _HomePageState extends State<HomePage> {
           }
 
           if (isBusy) {
-            _scheduleAssistantRestart(delay: const Duration(milliseconds: 1500));
+            _scheduleAssistantRestart(
+              delay: const Duration(milliseconds: 1500),
+            );
             return;
           }
 
@@ -1424,85 +1426,121 @@ class _ProductCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: const Color(0xFFE6E6E6)),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            height: 90,
-            decoration: BoxDecoration(
-              color: const Color(0xFFEDEDED),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child:
-                _isHttpImageUrl(product.imageUrl)
-                    ? ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: Image.network(
-                        product.imageUrl!,
-                        width: double.infinity,
-                        height: double.infinity,
-                        fit: BoxFit.cover,
-                        errorBuilder:
-                            (_, __, ___) => const Center(
-                              child: Icon(
-                                Icons.shopping_bag_outlined,
-                                color: Colors.black45,
-                              ),
-                            ),
-                      ),
-                    )
-                    : const Center(
-                      child: Icon(
-                        Icons.shopping_bag_outlined,
-                        color: Colors.black45,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final imageHeight = (constraints.maxHeight * 0.42).clamp(74.0, 90.0);
+
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                height: imageHeight,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEDEDED),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child:
+                    _isHttpImageUrl(product.imageUrl)
+                        ? ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: Image.network(
+                            product.imageUrl!,
+                            width: double.infinity,
+                            height: double.infinity,
+                            fit: BoxFit.cover,
+                            errorBuilder:
+                                (_, __, ___) => const Center(
+                                  child: Icon(
+                                    Icons.shopping_bag_outlined,
+                                    color: Colors.black45,
+                                  ),
+                                ),
+                          ),
+                        )
+                        : const Center(
+                          child: Icon(
+                            Icons.shopping_bag_outlined,
+                            color: Colors.black45,
+                          ),
+                        ),
+              ),
+              const SizedBox(height: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      product.name,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            product.name,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
-          ),
-          Text(
-            product.cheapestStore,
-            style: const TextStyle(fontSize: 10, color: Colors.black54),
-          ),
-          Text(
-            product.isOutOfStock ? 'Stock: 0' : 'Stock: ${product.quantity}',
-            style: TextStyle(
-              fontSize: 10,
-              fontWeight: FontWeight.w700,
-              color: product.isOutOfStock ? Colors.redAccent : Colors.black54,
-            ),
-          ),
-          const Spacer(),
-          Row(
-            children: [
-              Text(
-                product.isOutOfStock
-                    ? 'Out of stock'
-                    : 'RM ${product.lowestPrice.toStringAsFixed(2)}',
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w900,
-                  color: product.isOutOfStock ? Colors.redAccent : kOrange,
+                    const SizedBox(height: 1),
+                    Text(
+                      product.cheapestStore,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 10,
+                        color: Colors.black54,
+                      ),
+                    ),
+                    const SizedBox(height: 1),
+                    Text(
+                      product.isOutOfStock
+                          ? 'Stock: 0'
+                          : 'Stock: ${product.quantity}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                        color:
+                            product.isOutOfStock
+                                ? Colors.redAccent
+                                : Colors.black54,
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(width: 6),
-              if (product.oldPrice != null && !product.isOutOfStock)
-                Text(
-                  'RM ${product.oldPrice!.toStringAsFixed(2)}',
-                  style: const TextStyle(
-                    fontSize: 10,
-                    color: Colors.black38,
-                    decoration: TextDecoration.lineThrough,
+              const SizedBox(height: 4),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      product.isOutOfStock
+                          ? 'Out of stock'
+                          : 'RM ${product.lowestPrice.toStringAsFixed(2)}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w900,
+                        color:
+                            product.isOutOfStock ? Colors.redAccent : kOrange,
+                      ),
+                    ),
                   ),
-                ),
+                  if (product.oldPrice != null && !product.isOutOfStock) ...[
+                    const SizedBox(width: 6),
+                    Text(
+                      'RM ${product.oldPrice!.toStringAsFixed(2)}',
+                      style: const TextStyle(
+                        fontSize: 10,
+                        color: Colors.black38,
+                        decoration: TextDecoration.lineThrough,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
             ],
-          ),
-        ],
+          );
+        },
       ),
     );
   }

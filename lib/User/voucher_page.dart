@@ -14,10 +14,27 @@ import 'package:fyp/Admin/firestore_service.dart';
 
 // This class defines VoucherPage, used for this page/feature.
 class VoucherPage extends StatefulWidget {
-  const VoucherPage({super.key});
+  final bool showClaimablePromotions;
+  const VoucherPage({super.key, this.showClaimablePromotions = true});
 
   @override
   State<VoucherPage> createState() => _VoucherPageState();
+}
+
+class VoucherStandalonePage extends StatelessWidget {
+  const VoucherStandalonePage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Voucher'),
+        backgroundColor: _VoucherPageState.kOrange,
+        foregroundColor: Colors.black,
+      ),
+      body: const SafeArea(child: VoucherPage(showClaimablePromotions: false)),
+    );
+  }
 }
 
 // This class defines _VoucherPageState, used for this page/feature.
@@ -29,7 +46,9 @@ class _VoucherPageState extends State<VoucherPage> {
 
   void _showSnack(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   List<VoucherItem> _eligibleVouchers(AppStore store) {
@@ -159,162 +178,170 @@ class _VoucherPageState extends State<VoucherPage> {
             ),
             const SizedBox(height: 6),
             Expanded(
-              child: myItems.isEmpty
-                  ? Center(
-                      child: Text(
-                        _tab == 0
-                            ? 'No vouchers yet. Claim from promotions below.'
-                            : 'No usable vouchers yet.\nAdd more items to cart.',
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(fontWeight: FontWeight.w800),
-                      ),
-                    )
-                  : ListView.separated(
-                      padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
-                      itemCount: myItems.length,
-                      separatorBuilder: (_, __) {
-                        return const SizedBox(height: 10);
-                      },
-                      itemBuilder: (_, i) {
-                        final v = myItems[i];
-                        final applied = store.appliedVoucher?.id == v.id;
-                        final canApply = store.cartTotal >= v.minSpend;
-                        return _VoucherCard(
-                          brand: v.store,
-                          off: '${v.percent}%',
-                          minSpend:
-                              'Min spend RM ${v.minSpend.toStringAsFixed(2)} - ${v.code}',
-                          applied: applied,
-                          canApply: canApply,
-                          onCopy: () async {
-                            await Clipboard.setData(ClipboardData(text: v.code));
-                            _showSnack('Copied code ${v.code}');
-                          },
-                          onApply: () async {
-                            final msg = await store.applyVoucher(v.id);
-                            _showSnack(msg);
-                          },
-                        );
-                      },
-                    ),
-            ),
-            const Divider(height: 1),
-            Expanded(
-              child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                stream: _svc.publicPromosStream(),
-                builder: (context, snap) {
-                  if (snap.hasError) {
-                    return const Center(
-                      child: Padding(
-                        padding: EdgeInsets.all(16),
+              child:
+                  myItems.isEmpty
+                      ? Center(
                         child: Text(
-                          'Unable to load promotions right now.',
+                          _tab == 0
+                              ? 'No vouchers yet. Claim from promotions below.'
+                              : 'No usable vouchers yet.\nAdd more items to cart.',
                           textAlign: TextAlign.center,
-                          style: TextStyle(fontWeight: FontWeight.w700),
+                          style: const TextStyle(fontWeight: FontWeight.w800),
                         ),
-                      ),
-                    );
-                  }
-                  if (!snap.hasData) {
-                    return const Center(child: CircularProgressIndicator());
-                  }
-
-                  final docs = _activePromos(snap.data!.docs);
-
-                  if (docs.isEmpty) {
-                    return const Center(
-                      child: Text(
-                        'No promotions available to claim.',
-                        style: TextStyle(fontWeight: FontWeight.w700),
-                      ),
-                    );
-                  }
-
-                  return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                    stream: _svc.claimedPromosStream(),
-                    builder: (context, claimedSnap) {
-                      final claimedIds = _claimedIds(claimedSnap.data);
-
-                      return ListView.separated(
-                        padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
-                        itemCount: docs.length,
+                      )
+                      : ListView.separated(
+                        padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
+                        itemCount: myItems.length,
                         separatorBuilder: (_, __) {
                           return const SizedBox(height: 10);
                         },
                         itemBuilder: (_, i) {
-                          final d = docs[i];
-                          final p = d.data();
-                          final claimed = claimedIds.contains(d.id);
-                          final title = (p['title'] ?? 'Promotion').toString();
-                          final storeName =
-                              (p['storeName'] ?? 'Store').toString();
-                          final code = (p['code'] ?? '').toString();
+                          final v = myItems[i];
+                          final applied = store.appliedVoucher?.id == v.id;
+                          final canApply = store.cartTotal >= v.minSpend;
+                          return _VoucherCard(
+                            brand: v.store,
+                            off: '${v.percent}%',
+                            minSpend:
+                                'Min spend RM ${v.minSpend.toStringAsFixed(2)} - ${v.code}',
+                            applied: applied,
+                            canApply: canApply,
+                            onCopy: () async {
+                              await Clipboard.setData(
+                                ClipboardData(text: v.code),
+                              );
+                              _showSnack('Copied code ${v.code}');
+                            },
+                            onApply: () async {
+                              final msg = await store.applyVoucher(v.id);
+                              _showSnack(msg);
+                            },
+                          );
+                        },
+                      ),
+            ),
+            if (widget.showClaimablePromotions) ...[
+              const Divider(height: 1),
+              Expanded(
+                child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                  stream: _svc.publicPromosStream(),
+                  builder: (context, snap) {
+                    if (snap.hasError) {
+                      return const Center(
+                        child: Padding(
+                          padding: EdgeInsets.all(16),
+                          child: Text(
+                            'Unable to load promotions right now.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                      );
+                    }
+                    if (!snap.hasData) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
 
-                          return Container(
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFFFF7F1),
-                              borderRadius: BorderRadius.circular(10),
-                              border: Border.all(
-                                color: const Color(0xFFFFE0CA),
-                              ),
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  '$storeName - $title',
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w900,
-                                  ),
+                    final docs = _activePromos(snap.data!.docs);
+
+                    if (docs.isEmpty) {
+                      return const Center(
+                        child: Text(
+                          'No promotions available to claim.',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                      );
+                    }
+
+                    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                      stream: _svc.claimedPromosStream(),
+                      builder: (context, claimedSnap) {
+                        final claimedIds = _claimedIds(claimedSnap.data);
+
+                        return ListView.separated(
+                          padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
+                          itemCount: docs.length,
+                          separatorBuilder: (_, __) {
+                            return const SizedBox(height: 10);
+                          },
+                          itemBuilder: (_, i) {
+                            final d = docs[i];
+                            final p = d.data();
+                            final claimed = claimedIds.contains(d.id);
+                            final title =
+                                (p['title'] ?? 'Promotion').toString();
+                            final storeName =
+                                (p['storeName'] ?? 'Store').toString();
+                            final code = (p['code'] ?? '').toString();
+
+                            return Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFFFF7F1),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(
+                                  color: const Color(0xFFFFE0CA),
                                 ),
-                                const SizedBox(height: 4),
-                                Text((p['description'] ?? '').toString()),
-                                if (code.trim().isNotEmpty) ...[
-                                  const SizedBox(height: 4),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
                                   Text(
-                                    'Code: $code',
+                                    '$storeName - $title',
                                     style: const TextStyle(
-                                      fontWeight: FontWeight.w800,
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text((p['description'] ?? '').toString()),
+                                  if (code.trim().isNotEmpty) ...[
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      'Code: $code',
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                    ),
+                                  ],
+                                  const SizedBox(height: 8),
+                                  Align(
+                                    alignment: Alignment.centerRight,
+                                    child: ElevatedButton(
+                                      onPressed:
+                                          claimed
+                                              ? null
+                                              : () async {
+                                                final ok = await _svc
+                                                    .claimPromoAsVoucher(
+                                                      promoId: d.id,
+                                                      promoData: p,
+                                                    );
+                                                _showSnack(
+                                                  ok
+                                                      ? 'Promotion claimed to My Vouchers.'
+                                                      : 'You already claimed this promotion.',
+                                                );
+                                              },
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: kOrange,
+                                        foregroundColor: Colors.black,
+                                      ),
+                                      child: Text(
+                                        claimed ? 'Claimed' : 'Claim',
+                                      ),
                                     ),
                                   ),
                                 ],
-                                const SizedBox(height: 8),
-                                Align(
-                                  alignment: Alignment.centerRight,
-                                  child: ElevatedButton(
-                                    onPressed:
-                                        claimed
-                                            ? null
-                                            : () async {
-                                              final ok = await _svc
-                                                  .claimPromoAsVoucher(
-                                                    promoId: d.id,
-                                                    promoData: p,
-                                                  );
-                                              _showSnack(
-                                                ok
-                                                    ? 'Promotion claimed to My Vouchers.'
-                                                    : 'You already claimed this promotion.',
-                                              );
-                                            },
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: kOrange,
-                                      foregroundColor: Colors.black,
-                                    ),
-                                    child: Text(claimed ? 'Claimed' : 'Claim'),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          );
-                        },
-                      );
-                    },
-                  );
-                },
+                              ),
+                            );
+                          },
+                        );
+                      },
+                    );
+                  },
+                ),
               ),
-            ),
+            ],
           ],
         );
       },
@@ -396,7 +423,10 @@ class _VoucherCard extends StatelessWidget {
                   brand,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800),
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
               ),
               const SizedBox(width: 12),
@@ -415,7 +445,10 @@ class _VoucherCard extends StatelessWidget {
                     const SizedBox(height: 2),
                     Text(
                       minSpend,
-                      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                   ],
                 ),
@@ -457,5 +490,3 @@ class _VoucherCard extends StatelessWidget {
     );
   }
 }
-
-

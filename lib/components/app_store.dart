@@ -15,8 +15,15 @@ import 'package:flutter/foundation.dart';
 class ProductPrice {
   final String store;
   final double price;
+  final String storeId;
+  final double? distanceKm;
 
-  const ProductPrice({required this.store, required this.price});
+  const ProductPrice({
+    required this.store,
+    required this.price,
+    this.storeId = '',
+    this.distanceKm,
+  });
 }
 
 // This class defines ProductItem, used for this page/feature.
@@ -140,6 +147,7 @@ class OrderItem {
   final String paymentLast4;
   final String voucherCode;
   String status;
+  final String deliveryStatus;
 
   OrderItem({
     required this.id,
@@ -157,6 +165,7 @@ class OrderItem {
     this.paymentType = '',
     this.paymentLast4 = '',
     this.voucherCode = '',
+    this.deliveryStatus = '',
   });
 }
 
@@ -234,6 +243,7 @@ class AppStore extends ChangeNotifier {
 
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _productsSub;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _pricesSub;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _storesSub;
   StreamSubscription<User?>? _authSub;
   Timer? _catalogRetryTimer;
 
@@ -248,6 +258,7 @@ class AppStore extends ChangeNotifier {
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _profileSub;
 
   final List<ProductItem> _products = [];
+  final List<ProductItem> _displayProducts = [];
   final List<CartItem> _cart = [];
   final List<String> _likedProductIds = [];
   final List<String> _recentlyViewed = [];
@@ -260,8 +271,9 @@ class AppStore extends ChangeNotifier {
   bool _priceDropCheckRunning = false;
   bool _priceDropCheckQueued = false;
   int _pointsSpent = 0;
+  double _walletBalance = 0;
 
-  List<ProductItem> get products => List.unmodifiable(_products);
+  List<ProductItem> get products => List.unmodifiable(_displayProducts);
   List<CartItem> get cart => List.unmodifiable(_cart);
   List<String> get likedProductIds => List.unmodifiable(_likedProductIds);
   List<String> get recentlyViewedIds => List.unmodifiable(_recentlyViewed);
@@ -278,6 +290,7 @@ class AppStore extends ChangeNotifier {
   List<OrderItem> get orders => List.unmodifiable(_orders);
   List<String> get activityLogs => List.unmodifiable(_activityLogs);
   int get pointsSpent => _pointsSpent;
+  double get walletBalance => _walletBalance;
 
   String? get _uid => _auth.currentUser?.uid;
   bool get _isGuestUser {
@@ -371,6 +384,142 @@ class AppStore extends ChangeNotifier {
     return _round2(fee);
   }
 
+  double _distanceFromPostcodes(int customerPostcode, int storePostcode) {
+    final delta = (customerPostcode - storePostcode).abs() / 100.0;
+    final km = delta.clamp(_minDistanceKm, _maxDistanceKm).toDouble();
+    return _round2(km);
+  }
+
+  int? _storePostcode({required String storeId, required String storeName}) {
+    final byId = _storePostcodeById[storeId.trim()];
+    if (byId != null) return byId;
+    final byName = _storePostcodeByName[storeName.trim().toLowerCase()];
+    if (byName != null) return byName;
+    return _extractPostcode(storeName);
+  }
+
+  ProductPrice _withDistance(ProductPrice item) {
+    final customer = _userPostcode;
+    if (customer == null) {
+      return ProductPrice(
+        store: item.store,
+        price: item.price,
+        storeId: item.storeId,
+        distanceKm: null,
+      );
+    }
+    final storePostcode = _storePostcode(
+      storeId: item.storeId,
+      storeName: item.store,
+    );
+    final distance =
+        storePostcode == null
+            ? null
+            : _distanceFromPostcodes(customer, storePostcode);
+    return ProductPrice(
+      store: item.store,
+      price: item.price,
+      storeId: item.storeId,
+      distanceKm: distance,
+    );
+  }
+
+  List<ProductPrice> _sortedPricesByNearest(List<ProductPrice> input) {
+    final out = input.map(_withDistance).toList();
+    out.sort((a, b) {
+      final ad = a.distanceKm ?? 1e9;
+      final bd = b.distanceKm ?? 1e9;
+      final byDistance = ad.compareTo(bd);
+      if (byDistance != 0) return byDistance;
+      final byPrice = a.price.compareTo(b.price);
+      if (byPrice != 0) return byPrice;
+      return a.store.toLowerCase().compareTo(b.store.toLowerCase());
+    });
+    return out;
+  }
+
+  ProductItem _mergeProductGroup(List<ProductItem> group) {
+    final first = group.first;
+    String name = first.name;
+    String category = first.category;
+    String description = first.description;
+    String unit = first.unit;
+    String? imageUrl = first.imageUrl;
+    DateTime createdAt = first.createdAt;
+    int totalQty = 0;
+    double? oldPrice = first.oldPrice;
+
+    final Map<String, ProductPrice> byStore = <String, ProductPrice>{};
+    for (final p in group) {
+      if (p.name.trim().isNotEmpty) name = p.name;
+      if (category.trim().isEmpty && p.category.trim().isNotEmpty) {
+        category = p.category;
+      }
+      if (description.trim().isEmpty && p.description.trim().isNotEmpty) {
+        description = p.description;
+      }
+      if (unit.trim().isEmpty && p.unit.trim().isNotEmpty) {
+        unit = p.unit;
+      }
+      if ((imageUrl ?? '').trim().isEmpty &&
+          (p.imageUrl ?? '').trim().isNotEmpty) {
+        imageUrl = p.imageUrl;
+      }
+      if (p.createdAt.isAfter(createdAt)) {
+        createdAt = p.createdAt;
+      }
+      totalQty += p.quantity;
+      if (p.oldPrice != null) {
+        oldPrice =
+            oldPrice == null
+                ? p.oldPrice
+                : (p.oldPrice! > oldPrice ? p.oldPrice : oldPrice);
+      }
+      for (final price in p.prices) {
+        final key =
+            '${price.storeId.trim().toLowerCase()}|${price.store.trim().toLowerCase()}';
+        final prev = byStore[key];
+        if (prev == null || price.price < prev.price) {
+          byStore[key] = price;
+        }
+      }
+    }
+
+    return ProductItem(
+      id: first.id,
+      name: name,
+      category: category,
+      description: description,
+      unit: unit,
+      quantity: totalQty,
+      imageUrl: imageUrl,
+      createdAt: createdAt,
+      prices: _sortedPricesByNearest(byStore.values.toList()),
+      oldPrice: oldPrice,
+    );
+  }
+
+  void _rebuildDisplayProducts() {
+    final grouped = <String, List<ProductItem>>{};
+    for (final p in _products) {
+      final normalized = p.name.trim().toLowerCase();
+      final key = normalized.isEmpty ? 'id:${p.id}' : normalized;
+      grouped.putIfAbsent(key, () => <ProductItem>[]).add(p);
+    }
+
+    final merged = <ProductItem>[];
+    for (final entry in grouped.entries) {
+      final group = entry.value;
+      if (group.isEmpty) continue;
+      merged.add(_mergeProductGroup(group));
+    }
+    merged.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+
+    _displayProducts
+      ..clear()
+      ..addAll(merged);
+  }
+
   Future<void> _onProductsChanged(
     List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
   ) async {
@@ -385,6 +534,7 @@ class AppStore extends ChangeNotifier {
     _products
       ..clear()
       ..addAll(items);
+    _rebuildDisplayProducts();
 
     await _syncCartToCurrentStock();
 
@@ -423,6 +573,7 @@ class AppStore extends ChangeNotifier {
       final effective = (promo is num && promo > 0) ? promo : base;
       final item = ProductPrice(
         store: (p['storeName'] ?? p['storeId'] ?? pDoc.id).toString(),
+        storeId: (p['storeId'] ?? pDoc.id).toString(),
         price: _asDouble(effective),
       );
       if (item.price > 0) {
@@ -439,7 +590,7 @@ class AppStore extends ChangeNotifier {
       quantity: _productQuantityFromMap(data),
       imageUrl: (data['imageUrl'] as String?)?.trim(),
       createdAt: _asDate(data['createdAt'] ?? data['updatedAt']),
-      prices: prices,
+      prices: _sortedPricesByNearest(prices),
       oldPrice: data['oldPrice'] is num ? _asDouble(data['oldPrice']) : null,
     );
   }
@@ -452,7 +603,7 @@ class AppStore extends ChangeNotifier {
     var changed = false;
 
     for (final item in _cart) {
-      final product = productById(item.productId);
+      final product = _rawProductById(item.productId);
       final ref = _userDoc(uid).collection('cart').doc(item.productId);
       if (product == null || item.qty <= 0) {
         batch.delete(ref);
@@ -499,6 +650,7 @@ class AppStore extends ChangeNotifier {
     _catalogRetryTimer?.cancel();
     _productsSub?.cancel();
     _pricesSub?.cancel();
+    _storesSub?.cancel();
 
     _productsSub = _db
         .collection('products')
@@ -525,6 +677,35 @@ class AppStore extends ChangeNotifier {
           },
           onError: (error) {
             // If rules block collectionGroup('prices'), do not keep retrying forever.
+            if (_shouldRetryCatalogError(error)) {
+              _scheduleCatalogRetry();
+            }
+          },
+        );
+
+    _storesSub = _db
+        .collection('stores')
+        .snapshots()
+        .listen(
+          (snap) {
+            _storePostcodeById.clear();
+            _storePostcodeByName.clear();
+            for (final d in snap.docs) {
+              final data = d.data();
+              final name = (data['name'] ?? '').toString().trim();
+              final location = (data['location'] ?? '').toString().trim();
+              final postcode =
+                  _extractPostcode(location) ?? _extractPostcode(name);
+              if (postcode == null) continue;
+              _storePostcodeById[d.id] = postcode;
+              if (name.isNotEmpty) {
+                _storePostcodeByName[name.toLowerCase()] = postcode;
+              }
+            }
+            _rebuildDisplayProducts();
+            notifyListeners();
+          },
+          onError: (error) {
             if (_shouldRetryCatalogError(error)) {
               _scheduleCatalogRetry();
             }
@@ -563,8 +744,11 @@ class AppStore extends ChangeNotifier {
     _activityLogs.clear();
     _appliedVoucherId = null;
     _pointsSpent = 0;
+    _walletBalance = 0;
+    _userPostcode = null;
 
     if (user == null) {
+      _rebuildDisplayProducts();
       notifyListeners();
       return;
     }
@@ -574,6 +758,10 @@ class AppStore extends ChangeNotifier {
     _profileSub = u.snapshots().listen((snap) {
       final data = snap.data() ?? const <String, dynamic>{};
       _pointsSpent = _asInt(data['pointsSpent'], fallback: 0);
+      _walletBalance = _round2(_asDouble(data['walletBalance']));
+      final address = (data['address'] ?? data['location'] ?? '').toString();
+      _userPostcode = _extractPostcode(address);
+      _rebuildDisplayProducts();
       notifyListeners();
     });
 
@@ -665,6 +853,7 @@ class AppStore extends ChangeNotifier {
                 items: items,
                 total: _asDouble(data['total']),
                 status: (data['status'] ?? 'To Ship').toString(),
+                deliveryStatus: (data['deliveryStatus'] ?? '').toString(),
                 subtotal: _asDouble(data['subtotal']),
                 discount: _asDouble(data['discount']),
                 customerName: (data['customerName'] ?? '').toString(),
@@ -746,6 +935,16 @@ class AppStore extends ChangeNotifier {
   }
 
   ProductItem? productById(String id) {
+    for (final p in _displayProducts) {
+      if (p.id == id) return p;
+    }
+    for (final p in _products) {
+      if (p.id == id) return p;
+    }
+    return null;
+  }
+
+  ProductItem? _rawProductById(String id) {
     for (final p in _products) {
       if (p.id == id) return p;
     }
@@ -753,11 +952,11 @@ class AppStore extends ChangeNotifier {
   }
 
   int availableStock(String productId) {
-    return productById(productId)?.quantity ?? 0;
+    return _rawProductById(productId)?.quantity ?? 0;
   }
 
   bool canAddToCart(String productId, {int qty = 1}) {
-    final p = productById(productId);
+    final p = _rawProductById(productId);
     if (p == null) return false;
     if (qty <= 0) return false;
 
@@ -776,7 +975,7 @@ class AppStore extends ChangeNotifier {
     final wantedCategory = (category ?? '').trim().toLowerCase();
     final output = <ProductItem>[];
 
-    for (final p in _products) {
+    for (final p in _displayProducts) {
       final inCategory =
           wantedCategory.isEmpty || p.category.toLowerCase() == wantedCategory;
       final matchSearch =
@@ -792,7 +991,7 @@ class AppStore extends ChangeNotifier {
 
   List<ProductItem> get priceDrops {
     final copy = <ProductItem>[];
-    for (final product in _products) {
+    for (final product in _displayProducts) {
       if (product.dropPercent != null) {
         copy.add(product);
       }
@@ -803,7 +1002,7 @@ class AppStore extends ChangeNotifier {
 
   List<ProductItem> get newProducts {
     final copy = <ProductItem>[];
-    for (final product in _products) {
+    for (final product in _displayProducts) {
       copy.add(product);
     }
     copy.sort((a, b) => b.createdAt.compareTo(a.createdAt));
@@ -858,7 +1057,7 @@ class AppStore extends ChangeNotifier {
   double get cartTotal {
     double total = 0;
     for (final item in _cart) {
-      final p = productById(item.productId);
+      final p = _rawProductById(item.productId);
       if (p == null) continue;
       final cappedQty = item.qty > p.quantity ? p.quantity : item.qty;
       if (cappedQty <= 0) continue;
@@ -947,7 +1146,7 @@ class AppStore extends ChangeNotifier {
     final uid = _uid;
     if (uid == null) return false;
 
-    final product = productById(productId);
+    final product = _rawProductById(productId);
     if (product == null || qty <= 0) return false;
     if (product.quantity <= 0) return false;
 
@@ -979,7 +1178,7 @@ class AppStore extends ChangeNotifier {
       return true;
     }
 
-    final product = productById(productId);
+    final product = _rawProductById(productId);
     if (product == null || qty > product.quantity) {
       return false;
     }
@@ -1075,6 +1274,60 @@ class AppStore extends ChangeNotifier {
     }, SetOptions(merge: true));
   }
 
+  Future<String> topUpWallet({
+    required double amount,
+    required PaymentMethodItem paymentMethod,
+  }) async {
+    if (_isGuestUser) return 'Please login first.';
+    final uid = _uid;
+    if (uid == null) return 'Please login first.';
+
+    final topUpAmount = _round2(amount);
+    if (topUpAmount <= 0) return 'Top up amount must be more than RM 0.00.';
+
+    final userRef = _userDoc(uid);
+
+    try {
+      await _db.runTransaction((txn) async {
+        final userSnap = await txn.get(userRef);
+        final userData = userSnap.data() ?? const <String, dynamic>{};
+        final currentBalance = _round2(_asDouble(userData['walletBalance']));
+        final nextBalance = _round2(currentBalance + topUpAmount);
+
+        txn.set(userRef, {
+          'walletBalance': nextBalance,
+          'updatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+
+        final txId = 'topup_${DateTime.now().millisecondsSinceEpoch}';
+        final walletTxRef = userRef.collection('wallet_transactions').doc(txId);
+        txn.set(walletTxRef, {
+          'type': 'topup',
+          'source': 'card',
+          'amount': topUpAmount,
+          'currency': 'MYR',
+          'paymentMethodId': paymentMethod.id,
+          'paymentType': paymentMethod.type,
+          'paymentLast4': paymentMethod.last4,
+          'createdAt': FieldValue.serverTimestamp(),
+          'createdBy': 'user',
+        }, SetOptions(merge: true));
+      });
+    } on FirebaseException catch (e) {
+      if (e.code == 'permission-denied') {
+        return 'Top up blocked by Firestore rules.';
+      }
+      return 'Top up failed: ${e.message ?? e.code}';
+    } catch (e) {
+      return 'Top up failed: $e';
+    }
+
+    await _log(
+      'Wallet top up RM ${topUpAmount.toStringAsFixed(2)} via ${paymentMethod.type} **** ${paymentMethod.last4}',
+    );
+    return 'Top up successful: RM ${topUpAmount.toStringAsFixed(2)}';
+  }
+
   Future<void> deleteVoucher(String id) async {
     final uid = _uid;
     if (uid == null) return;
@@ -1140,7 +1393,7 @@ class AppStore extends ChangeNotifier {
   double _subtotalForItems(List<CartItem> items) {
     double total = 0;
     for (final item in items) {
-      final p = productById(item.productId);
+      final p = _rawProductById(item.productId);
       if (p == null || item.qty <= 0) continue;
       total += p.lowestPrice * item.qty;
     }
@@ -1150,7 +1403,39 @@ class AppStore extends ChangeNotifier {
   List<Map<String, dynamic>> _orderItemsToMap(List<CartItem> items) {
     final rows = <Map<String, dynamic>>[];
     for (final item in items) {
-      rows.add({'productId': item.productId, 'qty': item.qty});
+      final product = _rawProductById(item.productId);
+      String storeId = '';
+      String storeName = '';
+      double unitPrice = 0.0;
+      String category = '';
+
+      if (product != null) {
+        category = product.category.trim();
+        if (product.prices.isNotEmpty) {
+          var best = product.prices.first;
+          for (final p in product.prices) {
+            if (p.price <= best.price) {
+              best = p;
+            }
+          }
+          storeId = best.storeId.trim();
+          storeName = best.store.trim();
+          unitPrice = best.price;
+        } else {
+          unitPrice = product.lowestPrice;
+        }
+      }
+
+      final qty = item.qty > 0 ? item.qty : 1;
+      rows.add({
+        'productId': item.productId,
+        'qty': qty,
+        if (storeId.isNotEmpty) 'storeId': storeId,
+        if (storeName.isNotEmpty) 'storeName': storeName,
+        if (category.isNotEmpty) 'category': category,
+        'unitPrice': unitPrice,
+        'lineTotal': _round2(unitPrice * qty),
+      });
     }
     return rows;
   }
@@ -1292,9 +1577,9 @@ class AppStore extends ChangeNotifier {
         }
 
         if (voucher != null) {
-          final voucherRef = _userDoc(uid).collection('vouchers').doc(
-            voucher.id,
-          );
+          final voucherRef = _userDoc(
+            uid,
+          ).collection('vouchers').doc(voucher.id);
           txn.delete(voucherRef);
         }
       });
@@ -1309,6 +1594,189 @@ class AppStore extends ChangeNotifier {
 
     _appliedVoucherId = null;
     await _log('Created order ${order.id}');
+    return order;
+  }
+
+  Future<OrderItem?> checkoutWithWallet({
+    String? deliveryAddressOverride,
+  }) async {
+    final uid = _uid;
+    if (uid == null || _cart.isEmpty) return null;
+
+    final items = _copyCartItems();
+    if (items.isEmpty) return null;
+
+    final now = DateTime.now();
+    final ref = _userDoc(uid).collection('orders').doc();
+    final profileSnap = await _userDoc(uid).get();
+    final profile = profileSnap.data() ?? const <String, dynamic>{};
+    final overrideAddress = (deliveryAddressOverride ?? '').trim();
+    final deliveryAddress =
+        overrideAddress.isNotEmpty
+            ? overrideAddress
+            : (profile['address'] ?? profile['location'] ?? '')
+                .toString()
+                .trim();
+    final customerPhone = (profile['phone'] ?? '').toString().trim();
+    final customerName =
+        (profile['name'] ?? profile['fullName'] ?? '').toString().trim();
+    final profilePostcode = (profile['postcode'] ?? '').toString().trim();
+    final voucher = appliedVoucher;
+    final subtotal = _subtotalForItems(items);
+    final discount =
+        (() {
+          if (voucher == null) return 0.0;
+          if (subtotal <= 0 || subtotal < voucher.minSpend) return 0.0;
+          final percent = voucher.percent.clamp(0, 100).toDouble();
+          return subtotal * (percent / 100);
+        })();
+    final deliveryDistanceKm = estimateDeliveryDistanceKm(
+      deliveryAddress: deliveryAddress,
+      fallbackPostcode: profilePostcode,
+    );
+    final deliveryFee = estimateDeliveryFee(
+      deliveryAddress: deliveryAddress,
+      fallbackPostcode: profilePostcode,
+    );
+    final finalTotal =
+        (subtotal - discount + deliveryFee) <= 0
+            ? 0.0
+            : (subtotal - discount + deliveryFee);
+
+    final order = OrderItem(
+      id: ref.id,
+      createdAt: now,
+      items: items,
+      total: finalTotal,
+      status: 'Payment Pending',
+      subtotal: subtotal,
+      discount: discount,
+      customerName: customerName,
+      customerPhone: customerPhone,
+      deliveryAddress: deliveryAddress,
+      deliveryDistanceKm: deliveryDistanceKm,
+      deliveryFee: deliveryFee,
+      paymentType: 'Digital Wallet',
+      paymentLast4: '',
+      voucherCode: voucher?.code ?? '',
+    );
+
+    try {
+      await _db.runTransaction((txn) async {
+        final productSnapshots =
+            <String, DocumentSnapshot<Map<String, dynamic>>>{};
+        for (final item in items) {
+          final productRef = _db.collection('products').doc(item.productId);
+          final productSnap = await txn.get(productRef);
+          if (!productSnap.exists) {
+            throw StateError('Product not found: ${item.productId}');
+          }
+          productSnapshots[item.productId] = productSnap;
+        }
+
+        final userRef = _userDoc(uid);
+        final userSnap = await txn.get(userRef);
+        final userData = userSnap.data() ?? const <String, dynamic>{};
+        final currentBalance = _round2(_asDouble(userData['walletBalance']));
+        final needed = _round2(finalTotal);
+        if (needed > 0 && currentBalance + 0.0001 < needed) {
+          throw StateError(
+            'Insufficient wallet balance. Current RM ${currentBalance.toStringAsFixed(2)}, need RM ${needed.toStringAsFixed(2)}.',
+          );
+        }
+        final nextBalance = _round2(currentBalance - needed);
+
+        for (final item in items) {
+          final productRef = _db.collection('products').doc(item.productId);
+          final productSnap = productSnapshots[item.productId];
+          if (productSnap == null || !productSnap.exists) {
+            throw StateError('Product not found: ${item.productId}');
+          }
+          final data = productSnap.data() ?? const <String, dynamic>{};
+          final productName = (data['name'] ?? item.productId).toString();
+          final available = _asInt(data['quantity'], fallback: 0);
+          if (available <= 0) {
+            throw StateError('$productName is out of stock.');
+          }
+          if (available < item.qty) {
+            throw StateError(
+              '$productName has only $available item(s) left in stock.',
+            );
+          }
+
+          txn.update(productRef, {
+            'quantity': available - item.qty,
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+        }
+
+        txn.set(ref, {
+          'createdAt': FieldValue.serverTimestamp(),
+          'updatedAt': FieldValue.serverTimestamp(),
+          'userId': uid,
+          'customerName': customerName,
+          'customerPhone': customerPhone,
+          'address': deliveryAddress,
+          'deliveryAddress': deliveryAddress,
+          'deliveryDistanceKm': deliveryDistanceKm,
+          'deliveryFee': deliveryFee,
+          'status': order.status,
+          'total': order.total,
+          'subtotal': subtotal,
+          'discount': discount,
+          'voucherId': voucher?.id,
+          'voucherCode': voucher?.code,
+          'voucherPercent': voucher?.percent,
+          'paymentMethodId': 'wallet',
+          'paymentType': 'Digital Wallet',
+          'paymentLast4': '',
+          'paymentStatus': 'paid',
+          'paymentGateway': 'wallet',
+          'paidAt': FieldValue.serverTimestamp(),
+          'items': _orderItemsToMap(order.items),
+        });
+
+        txn.set(userRef, {
+          'walletBalance': nextBalance,
+          'updatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+
+        final walletTxRef = userRef
+            .collection('wallet_transactions')
+            .doc('payment_${ref.id}');
+        txn.set(walletTxRef, {
+          'type': 'payment',
+          'source': 'checkout_wallet',
+          'orderId': ref.id,
+          'amount': needed,
+          'currency': 'MYR',
+          'createdAt': FieldValue.serverTimestamp(),
+          'createdBy': 'user',
+        }, SetOptions(merge: true));
+
+        for (final item in items) {
+          final cartRef = _userDoc(uid).collection('cart').doc(item.productId);
+          txn.delete(cartRef);
+        }
+
+        if (voucher != null) {
+          final voucherRef = _userDoc(
+            uid,
+          ).collection('vouchers').doc(voucher.id);
+          txn.delete(voucherRef);
+        }
+      });
+    } on FirebaseException catch (e) {
+      if (e.code == 'permission-denied') {
+        throw StateError(
+          'Checkout blocked by Firestore rules: user cannot update product stock or wallet.',
+        );
+      }
+      rethrow;
+    }
+
+    _appliedVoucherId = null;
+    await _log('Created order ${order.id} using Digital Wallet');
     return order;
   }
 
@@ -1327,6 +1795,7 @@ class AppStore extends ChangeNotifier {
   Future<void> updateOrderPayment({
     required String orderId,
     required String paymentStatus,
+    String paymentGateway = 'billplz',
     String? billId,
     String? billUrl,
     String? billState,
@@ -1336,15 +1805,113 @@ class AppStore extends ChangeNotifier {
 
     await _userDoc(uid).collection('orders').doc(orderId).set({
       'paymentStatus': paymentStatus,
-      'paymentGateway': 'billplz',
-      if (billId != null && billId.trim().isNotEmpty) 'paymentBillId': billId.trim(),
-      if (billUrl != null && billUrl.trim().isNotEmpty) 'paymentBillUrl': billUrl.trim(),
-      if (billState != null && billState.trim().isNotEmpty) 'paymentBillState': billState.trim(),
+      'paymentGateway': paymentGateway,
+      if (billId != null && billId.trim().isNotEmpty)
+        'paymentBillId': billId.trim(),
+      if (billUrl != null && billUrl.trim().isNotEmpty)
+        'paymentBillUrl': billUrl.trim(),
+      if (billState != null && billState.trim().isNotEmpty)
+        'paymentBillState': billState.trim(),
       if (paymentStatus == 'paid') 'paidAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
 
     await _log('Order $orderId payment -> $paymentStatus');
+  }
+
+  Future<bool> cancelOrderWithRefund(String orderId) async {
+    final uid = _uid;
+    if (uid == null) {
+      throw StateError('Please login first.');
+    }
+
+    final orderRef = _userDoc(uid).collection('orders').doc(orderId);
+    final userRef = _userDoc(uid);
+    var refunded = false;
+
+    await _db.runTransaction((txn) async {
+      final orderSnap = await txn.get(orderRef);
+      if (!orderSnap.exists) {
+        throw StateError('Order not found.');
+      }
+
+      final orderData = orderSnap.data() ?? const <String, dynamic>{};
+      final status =
+          (orderData['status'] ?? '').toString().trim().toLowerCase();
+      final deliveryStatus =
+          (orderData['deliveryStatus'] ?? '').toString().trim().toLowerCase();
+
+      if (status == 'completed' || status == 'delivered') {
+        throw StateError('Completed orders cannot be cancelled.');
+      }
+      if (status == 'cancelled' || deliveryStatus == 'cancelled') {
+        return;
+      }
+
+      final paymentStatus =
+          (orderData['paymentStatus'] ?? '').toString().trim().toLowerCase();
+      final refundStatus =
+          (orderData['refundStatus'] ?? '').toString().trim().toLowerCase();
+      final total = _round2(_asDouble(orderData['total']));
+      final shouldRefund =
+          paymentStatus == 'paid' && refundStatus != 'refunded' && total > 0;
+
+      final payload = <String, dynamic>{
+        'status': 'Cancelled',
+        'deliveryStatus': 'Cancelled',
+        'cancelledBy': 'user',
+        'cancelledAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      };
+
+      if (shouldRefund) {
+        final userSnap = await txn.get(userRef);
+        final userData = userSnap.data() ?? const <String, dynamic>{};
+        final walletBalance = _round2(_asDouble(userData['walletBalance']));
+        final nextBalance = _round2(walletBalance + total);
+
+        payload.addAll({
+          'refundStatus': 'refunded',
+          'refundAmount': total,
+          'refundTarget': 'wallet',
+          'refundReason': 'order_cancelled_by_user',
+          'refundedBy': 'user',
+          'refundedAt': FieldValue.serverTimestamp(),
+        });
+
+        txn.set(userRef, {
+          'walletBalance': nextBalance,
+          'updatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+
+        final walletTxRef = userRef
+            .collection('wallet_transactions')
+            .doc('refund_$orderId');
+        txn.set(walletTxRef, {
+          'type': 'refund',
+          'source': 'order_cancelled_by_user',
+          'orderId': orderId,
+          'amount': total,
+          'currency': 'MYR',
+          'createdAt': FieldValue.serverTimestamp(),
+          'createdBy': 'system',
+        }, SetOptions(merge: true));
+
+        refunded = true;
+      } else if (refundStatus.isEmpty) {
+        payload['refundStatus'] = 'not_required';
+      }
+
+      txn.set(orderRef, payload, SetOptions(merge: true));
+    });
+
+    if (refunded) {
+      await _log('Order $orderId cancelled, refunded to wallet.');
+    } else {
+      await _log('Order $orderId cancelled.');
+    }
+
+    return refunded;
   }
 
   List<OrderItem> ordersByStatus(String status) {
@@ -1711,15 +2278,16 @@ class AppStore extends ChangeNotifier {
       if (addToCartPrefix.isNotEmpty) {
         productText = cmd.replaceFirst(addToCartPrefix, '').trim();
       }
-      productText = productText
-          .replaceAll(
-            RegExp(
-              r'\b(add|to|two|into|in|put|cart|card|please|my|the|a|an)\b',
-            ),
-            ' ',
-          )
-          .replaceAll(RegExp(r'\s+'), ' ')
-          .trim();
+      productText =
+          productText
+              .replaceAll(
+                RegExp(
+                  r'\b(add|to|two|into|in|put|cart|card|please|my|the|a|an)\b',
+                ),
+                ' ',
+              )
+              .replaceAll(RegExp(r'\s+'), ' ')
+              .trim();
       ProductItem? p;
 
       if (productText.isNotEmpty) {
@@ -1864,6 +2432,7 @@ class AppStore extends ChangeNotifier {
     _catalogRetryTimer?.cancel();
     await _productsSub?.cancel();
     await _pricesSub?.cancel();
+    await _storesSub?.cancel();
     await _authSub?.cancel();
     await _likesSub?.cancel();
     await _recentSub?.cancel();
@@ -1876,3 +2445,7 @@ class AppStore extends ChangeNotifier {
     await _profileSub?.cancel();
   }
 }
+
+final Map<String, int> _storePostcodeById = <String, int>{};
+final Map<String, int> _storePostcodeByName = <String, int>{};
+int? _userPostcode;

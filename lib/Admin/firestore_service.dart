@@ -39,6 +39,16 @@ class FirestoreService {
     return fallback;
   }
 
+  int _asInt(Object? value, {int fallback = 0}) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) {
+      final parsed = int.tryParse(value.trim());
+      if (parsed != null) return parsed;
+    }
+    return fallback;
+  }
+
   String _asText(Object? value, {String fallback = ''}) {
     if (value == null) return fallback;
     final text = value.toString();
@@ -46,9 +56,43 @@ class FirestoreService {
     return text;
   }
 
+  bool _isFinalOrderState({
+    required String status,
+    required String deliveryStatus,
+  }) {
+    final s = status.trim().toLowerCase();
+    final d = deliveryStatus.trim().toLowerCase();
+    return s == 'completed' ||
+        s == 'delivered' ||
+        s == 'cancelled' ||
+        s == 'canceled' ||
+        d == 'delivered' ||
+        d == 'cancelled' ||
+        d == 'canceled';
+  }
+
+  String _userIdFromOrderPath(String orderPath) {
+    final parts = orderPath.split('/');
+    if (parts.length >= 4 && parts[0] == 'users' && parts[2] == 'orders') {
+      return parts[1];
+    }
+    return '';
+  }
+
+  double _round2(double value) {
+    return (value * 100).roundToDouble() / 100;
+  }
+
+  void _invalidateOrderCaches() {
+    _adminOrdersCache = null;
+    _adminOrdersCacheAt = null;
+    _salesSummaryCache = null;
+    _salesSummaryCacheAt = null;
+  }
+
   Future<bool> _safeDocExists(
-      DocumentReference<Map<String, dynamic>> ref,
-      ) async {
+    DocumentReference<Map<String, dynamic>> ref,
+  ) async {
     try {
       final snap = await ref.get();
       return snap.exists;
@@ -65,10 +109,16 @@ class FirestoreService {
 
   Future<String> currentRole() async {
     final user = _currentUser;
-    if (user == null) return 'guest';
-    if (user.isAnonymous) return 'guest';
+    if (user == null || user.isAnonymous) return 'guest';
 
-    final isAdmin = await _safeDocExists(_db.collection('admins').doc(user.uid));
+    final isSuperAdmin = await _safeDocExists(
+      _db.collection('super_admins').doc(user.uid),
+    );
+    if (isSuperAdmin) return 'super_admin';
+
+    final isAdmin = await _safeDocExists(
+      _db.collection('admins').doc(user.uid),
+    );
     if (isAdmin) return 'admin';
 
     final isDelivery = await _safeDocExists(
@@ -79,8 +129,12 @@ class FirestoreService {
     try {
       final userDoc = await _db.collection('users').doc(user.uid).get();
       final data = userDoc.data() ?? const {};
-      if ((data['role'] ?? '').toString().toLowerCase() == 'delivery' ||
-          data['isDelivery'] == true) {
+
+      final role = (data['role'] ?? '').toString().toLowerCase().trim();
+
+      if (role == 'super_admin') return 'super_admin';
+      if (role == 'admin') return 'admin';
+      if (role == 'delivery' || data['isDelivery'] == true) {
         return 'delivery';
       }
     } on FirebaseException catch (_) {}
@@ -88,9 +142,44 @@ class FirestoreService {
     return 'user';
   }
 
+  Future<bool> isSuperAdmin() async {
+    final user = _currentUser;
+    if (user == null || user.isAnonymous) return false;
+    return _safeDocExists(_db.collection('super_admins').doc(user.uid));
+  }
+
   Future<bool> isAdmin() async {
-    final doc = await _db.collection('admins').doc(uid).get();
-    return doc.exists;
+    final user = _currentUser;
+    if (user == null || user.isAnonymous) return false;
+    final adminDocExists = await _safeDocExists(
+      _db.collection('admins').doc(user.uid),
+    );
+    if (adminDocExists) return true;
+    try {
+      final userDoc = await _db.collection('users').doc(user.uid).get();
+      final role =
+          (userDoc.data()?['role'] ?? '').toString().trim().toLowerCase();
+      return role == 'admin';
+    } on FirebaseException {
+      return false;
+    }
+  }
+
+  Future<String> adminOrSuperAdminRole() async {
+    final user = _currentUser;
+    if (user == null || user.isAnonymous) return 'none';
+
+    final isSuperAdmin = await _safeDocExists(
+      _db.collection('super_admins').doc(user.uid),
+    );
+    if (isSuperAdmin) return 'super_admin';
+
+    final isAdmin = await _safeDocExists(
+      _db.collection('admins').doc(user.uid),
+    );
+    if (isAdmin) return 'admin';
+
+    return 'none';
   }
 
   Future<void> adminSignInEmail(String email, String password) async {
@@ -170,14 +259,11 @@ class FirestoreService {
     final safeFolder = _safeToken(folder, fallback: 'uploads');
     final safeName = _safeToken(fileNameHint ?? 'image');
 
-    final ref = FirebaseStorage.instance
-        .ref()
-        .child('$safeFolder/${safeName}_$timestamp.$ext');
-
-    await ref.putData(
-      bytes,
-      SettableMetadata(contentType: contentType),
+    final ref = FirebaseStorage.instance.ref().child(
+      '$safeFolder/${safeName}_$timestamp.$ext',
     );
+
+    await ref.putData(bytes, SettableMetadata(contentType: contentType));
     return ref.getDownloadURL();
   }
 
@@ -189,15 +275,70 @@ class FirestoreService {
     String? storeId,
     required String name,
     required bool enabled,
+    String? location,
+    String? logoUrl,
+    String? adminUid,
+    String? adminEmail,
+    String? adminName,
+    String? adminPhone,
   }) async {
     final trimmedId = (storeId ?? '').trim();
-    final ref = trimmedId.isEmpty
-        ? _db.collection('stores').doc()
-        : _db.collection('stores').doc(trimmedId);
+    final ref =
+        trimmedId.isEmpty
+            ? _db.collection('stores').doc()
+            : _db.collection('stores').doc(trimmedId);
+
+    final cleanAdminUid = (adminUid ?? '').trim();
+    final cleanAdminEmail = (adminEmail ?? '').trim();
+    final cleanAdminName = (adminName ?? '').trim();
+    final cleanAdminPhone = (adminPhone ?? '').trim();
+    final cleanLocation = (location ?? '').trim();
+    final cleanLogoUrl = (logoUrl ?? '').trim();
 
     await ref.set({
-      'name': name,
+      'name': name.trim(),
       'enabled': enabled,
+      'location': cleanLocation,
+      'logoUrl': cleanLogoUrl,
+      'adminUid': cleanAdminUid,
+      'adminEmail': cleanAdminEmail,
+      'adminName': cleanAdminName,
+      'adminPhone': cleanAdminPhone,
+      'updatedAt': FieldValue.serverTimestamp(),
+      if (trimmedId.isEmpty) 'createdAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
+  Future<void> upsertStoreWithAdmin({
+    String? storeId,
+    required String name,
+    required bool enabled,
+    String? location,
+    String? logoUrl,
+    String? adminUid,
+    String? adminEmail,
+    String? adminName,
+    String? adminPhone,
+  }) async {
+    final trimmedId = (storeId ?? '').trim();
+    final ref =
+        trimmedId.isEmpty
+            ? _db.collection('stores').doc()
+            : _db.collection('stores').doc(trimmedId);
+
+    final cleanLocation = (location ?? '').trim();
+    final cleanLogoUrl = (logoUrl ?? '').trim();
+    final cleanAdminPhone = (adminPhone ?? '').trim();
+
+    await ref.set({
+      'name': name.trim(),
+      'enabled': enabled,
+      'location': cleanLocation,
+      'logoUrl': cleanLogoUrl,
+      'adminUid': (adminUid ?? '').trim(),
+      'adminEmail': (adminEmail ?? '').trim(),
+      'adminName': (adminName ?? '').trim(),
+      'adminPhone': cleanAdminPhone,
       'updatedAt': FieldValue.serverTimestamp(),
       if (trimmedId.isEmpty) 'createdAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
@@ -207,14 +348,71 @@ class FirestoreService {
     await _db.collection('stores').doc(storeId).delete();
   }
 
-  Stream<QuerySnapshot<Map<String, dynamic>>> promosStream({String? storeId}) {
-    Query<Map<String, dynamic>> q =
-    _db.collection('store_promotions').orderBy('endAt', descending: false);
-
-    if (storeId != null && storeId != 'all') {
-      q = q.where('storeId', isEqualTo: storeId);
+  Future<Map<String, String?>> myStoreInfo() async {
+    final user = _currentUser;
+    if (user == null || user.isAnonymous) {
+      return {'storeId': null, 'storeName': null};
     }
-    return q.snapshots();
+
+    try {
+      final adminDoc = await _db.collection('admins').doc(user.uid).get();
+      final adminData = adminDoc.data() ?? const <String, dynamic>{};
+
+      final adminStoreId = (adminData['storeId'] ?? '').toString().trim();
+      final adminStoreName = (adminData['storeName'] ?? '').toString().trim();
+      if (adminStoreId.isNotEmpty || adminStoreName.isNotEmpty) {
+        return {
+          'storeId': adminStoreId.isEmpty ? null : adminStoreId,
+          'storeName': adminStoreName.isEmpty ? null : adminStoreName,
+        };
+      }
+
+      final userDoc = await _db.collection('users').doc(user.uid).get();
+      final userData = userDoc.data() ?? const <String, dynamic>{};
+
+      final userStoreId = (userData['storeId'] ?? '').toString().trim();
+      final userStoreName = (userData['storeName'] ?? '').toString().trim();
+      if (userStoreId.isNotEmpty || userStoreName.isNotEmpty) {
+        return {
+          'storeId': userStoreId.isEmpty ? null : userStoreId,
+          'storeName': userStoreName.isEmpty ? null : userStoreName,
+        };
+      }
+
+      final byAdminUid =
+          await _db
+              .collection('stores')
+              .where('adminUid', isEqualTo: user.uid)
+              .limit(1)
+              .get();
+      if (byAdminUid.docs.isNotEmpty) {
+        final d = byAdminUid.docs.first;
+        final data = d.data();
+        final storeName = (data['name'] ?? '').toString().trim();
+        return {
+          'storeId': d.id,
+          'storeName': storeName.isEmpty ? null : storeName,
+        };
+      }
+
+      return {'storeId': null, 'storeName': null};
+    } on FirebaseException {
+      return {'storeId': null, 'storeName': null};
+    }
+  }
+
+  Stream<QuerySnapshot<Map<String, dynamic>>> promosStream({String? storeId}) {
+    if (storeId != null && storeId != 'all') {
+      // Avoid composite-index dependency on where(storeId)+orderBy(endAt).
+      return _db
+          .collection('store_promotions')
+          .where('storeId', isEqualTo: storeId)
+          .snapshots();
+    }
+    return _db
+        .collection('store_promotions')
+        .orderBy('endAt', descending: false)
+        .snapshots();
   }
 
   Stream<QuerySnapshot<Map<String, dynamic>>> publicPromosStream() {
@@ -242,7 +440,7 @@ class FirestoreService {
     if (m is num && m >= 0) return m.toDouble();
 
     final text =
-    '${data['title'] ?? ''} ${data['description'] ?? ''}'.toLowerCase();
+        '${data['title'] ?? ''} ${data['description'] ?? ''}'.toLowerCase();
     final match = RegExp(
       r'(?:min(?:imum)?\s*spend|min)\s*(?:rm)?\s*([0-9]+(?:\.[0-9]+)?)',
     ).firstMatch(text);
@@ -282,16 +480,16 @@ class FirestoreService {
         .collection('vouchers')
         .doc(promoId)
         .set({
-      'store': storeName,
-      'percent': percent,
-      'minSpend': minSpend,
-      'code': code,
-      'promoId': promoId,
-      'title': (promoData['title'] ?? '').toString(),
-      'description': (promoData['description'] ?? '').toString(),
-      'updatedAt': FieldValue.serverTimestamp(),
-      'claimedAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
+          'store': storeName,
+          'percent': percent,
+          'minSpend': minSpend,
+          'code': code,
+          'promoId': promoId,
+          'title': (promoData['title'] ?? '').toString(),
+          'description': (promoData['description'] ?? '').toString(),
+          'updatedAt': FieldValue.serverTimestamp(),
+          'claimedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
 
     await claimedRef.set({
       'promoId': promoId,
@@ -340,19 +538,24 @@ class FirestoreService {
 
   Stream<QuerySnapshot<Map<String, dynamic>>> productsStream({
     required String search,
+    String? storeId,
   }) {
     final s = search.trim().toLowerCase();
-
-    if (s.isEmpty) {
+    final cleanStoreId = (storeId ?? '').trim();
+    if (cleanStoreId.isNotEmpty && cleanStoreId != 'all') {
+      // Avoid composite-index dependency on where(storeId)+orderBy(nameLower).
       return _db
           .collection('products')
-          .orderBy('nameLower')
-          .limit(100)
+          .where('storeId', isEqualTo: cleanStoreId)
+          .limit(300)
           .snapshots();
     }
 
-    return _db
-        .collection('products')
+    final query = _db.collection('products');
+    if (s.isEmpty) {
+      return query.orderBy('nameLower').limit(100).snapshots();
+    }
+    return query
         .orderBy('nameLower')
         .startAt([s])
         .endAt(['$s\uf8ff'])
@@ -368,11 +571,14 @@ class FirestoreService {
     required int quantity,
     String? description,
     String? imageUrl,
+    String? storeId,
+    String? storeName,
   }) async {
     final trimmedId = (productId ?? '').trim();
-    final ref = trimmedId.isEmpty
-        ? _db.collection('products').doc()
-        : _db.collection('products').doc(trimmedId);
+    final ref =
+        trimmedId.isEmpty
+            ? _db.collection('products').doc()
+            : _db.collection('products').doc(trimmedId);
 
     final cleanName = name.trim();
     final cleanUnit = unit.trim();
@@ -397,6 +603,8 @@ class FirestoreService {
       'description': cleanDescription,
       'imageUrl': cleanImageUrl,
       'searchKeywords': searchKeywords,
+      if ((storeId ?? '').trim().isNotEmpty) 'storeId': storeId!.trim(),
+      if ((storeName ?? '').trim().isNotEmpty) 'storeName': storeName!.trim(),
       'updatedAt': FieldValue.serverTimestamp(),
       if (trimmedId.isEmpty) 'createdAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
@@ -406,8 +614,19 @@ class FirestoreService {
     await _db.collection('products').doc(productId).delete();
   }
 
-  Stream<QuerySnapshot<Map<String, dynamic>>> pricesStream(String productId) {
-    return _db.collection('products').doc(productId).collection('prices').snapshots();
+  Stream<QuerySnapshot<Map<String, dynamic>>> pricesStream(
+    String productId, {
+    String? storeId,
+  }) {
+    final cleanStoreId = (storeId ?? '').trim();
+    Query<Map<String, dynamic>> query = _db
+        .collection('products')
+        .doc(productId)
+        .collection('prices');
+    if (cleanStoreId.isNotEmpty && cleanStoreId != 'all') {
+      query = query.where('storeId', isEqualTo: cleanStoreId);
+    }
+    return query.snapshots();
   }
 
   Future<void> upsertPrice({
@@ -423,12 +642,12 @@ class FirestoreService {
         .collection('prices')
         .doc(storeId)
         .set({
-      'storeId': storeId,
-      'storeName': storeName,
-      'price': price,
-      'promoPrice': promoPrice,
-      'updatedAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
+          'storeId': storeId,
+          'storeName': storeName,
+          'price': price,
+          'promoPrice': promoPrice,
+          'updatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
   }
 
   Future<void> deletePrice({
@@ -514,6 +733,82 @@ class FirestoreService {
         .snapshots();
   }
 
+  bool _isDeliveredForReview(Map<String, dynamic> order) {
+    final status = _asText(order['status']).toLowerCase().trim();
+    final deliveryStatus = _asText(order['deliveryStatus']).toLowerCase().trim();
+
+    return status == 'completed' ||
+        status == 'delivered' ||
+        deliveryStatus == 'delivered';
+  }
+
+  bool _orderContainsProduct({
+    required Map<String, dynamic> order,
+    required String productId,
+  }) {
+    final cleanProductId = productId.trim();
+    if (cleanProductId.isEmpty) return false;
+
+    final rawItems = order['items'];
+    if (rawItems is! List) return false;
+
+    for (final item in rawItems) {
+      if (item is! Map) continue;
+      final itemProductId = _asText(item['productId']).trim();
+      final qty = _asInt(item['qty'], fallback: 0);
+      if (itemProductId == cleanProductId && qty > 0) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  Future<bool> currentUserCanReviewProduct(String productId) async {
+    final user = _currentUser;
+    final cleanProductId = productId.trim();
+    if (user == null || user.isAnonymous || cleanProductId.isEmpty) {
+      return false;
+    }
+
+    final ordersSnap =
+        await _db.collection('users').doc(user.uid).collection('orders').get();
+
+    for (final doc in ordersSnap.docs) {
+      final order = doc.data();
+      if (!_isDeliveredForReview(order)) continue;
+      if (_orderContainsProduct(order: order, productId: cleanProductId)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  Future<String?> _currentUserReviewDocIdForProduct(String productId) async {
+    final user = _currentUser;
+    final cleanProductId = productId.trim();
+    if (user == null || user.isAnonymous || cleanProductId.isEmpty) {
+      return null;
+    }
+
+    final myReviewsSnap =
+        await _db
+            .collection('product_reviews')
+            .where('userId', isEqualTo: user.uid)
+            .get();
+
+    for (final doc in myReviewsSnap.docs) {
+      final data = doc.data();
+      final reviewedProductId = _asText(data['productId']).trim();
+      if (reviewedProductId == cleanProductId) {
+        return doc.id;
+      }
+    }
+
+    return null;
+  }
+
   Future<void> upsertReview({
     String? reviewId,
     required String productId,
@@ -523,9 +818,26 @@ class FirestoreService {
   }) async {
     final user = _currentUser;
     if (user == null || user.isAnonymous) return;
+    final cleanProductId = productId.trim();
+    if (cleanProductId.isEmpty) {
+      throw StateError('Invalid product id for review.');
+    }
+    final canReview = await currentUserCanReviewProduct(productId);
+    if (!canReview) {
+      throw StateError(
+        'Only users who purchased and received this product can submit a review.',
+      );
+    }
+
+    final existingReviewId = await _currentUserReviewDocIdForProduct(
+      cleanProductId,
+    );
+    if (reviewId == null && existingReviewId != null) {
+      throw StateError('You already reviewed this product.');
+    }
 
     final data = {
-      'productId': productId,
+      'productId': cleanProductId,
       'productName': productName,
       'userId': user.uid,
       'userEmail': user.email ?? '',
@@ -590,7 +902,10 @@ class FirestoreService {
         'createdAt': FieldValue.serverTimestamp(),
       });
     } else {
-      await _db.collection('events').doc(eventId).set(data, SetOptions(merge: true));
+      await _db
+          .collection('events')
+          .doc(eventId)
+          .set(data, SetOptions(merge: true));
     }
   }
 
@@ -603,25 +918,27 @@ class FirestoreService {
   }
 
   Future<List<QueryDocumentSnapshot<Map<String, dynamic>>>> _loadOrdersByUsers({
-    int perUserLimit = 50,
-    int maxUsers = 200,
+    int perUserLimit = 200,
+    int maxUsers = 1200,
     int batchSize = 12,
   }) async {
     final users = await _db.collection('users').limit(maxUsers).get();
     final result = <QueryDocumentSnapshot<Map<String, dynamic>>>[];
 
     for (int i = 0; i < users.docs.length; i += batchSize) {
-      final end = (i + batchSize > users.docs.length)
-          ? users.docs.length
-          : i + batchSize;
+      final end =
+          (i + batchSize > users.docs.length)
+              ? users.docs.length
+              : i + batchSize;
       final batch = users.docs.sublist(i, end);
 
       for (final userDoc in batch) {
-        final snap = await userDoc.reference
-            .collection('orders')
-            .orderBy('createdAt', descending: true)
-            .limit(perUserLimit)
-            .get();
+        final snap =
+            await userDoc.reference
+                .collection('orders')
+                .orderBy('createdAt', descending: true)
+                .limit(perUserLimit)
+                .get();
 
         result.addAll(snap.docs);
       }
@@ -655,10 +972,238 @@ class FirestoreService {
       return cached;
     }
 
-    final loaded = await _loadOrdersByUsers();
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> loaded;
+    try {
+      final groupSnap = await _db.collectionGroup('orders').get();
+      loaded = groupSnap.docs;
+    } on FirebaseException catch (e) {
+      if (e.code == 'permission-denied' || e.code == 'failed-precondition') {
+        loaded = await _loadOrdersByUsers(batchSize: 20);
+      } else {
+        rethrow;
+      }
+    }
+
+    DateTime asDate(Object? v) {
+      if (v is Timestamp) return v.toDate();
+      return DateTime.fromMillisecondsSinceEpoch(0);
+    }
+
+    loaded.sort((a, b) {
+      final ad = asDate(a.data()['createdAt']);
+      final bd = asDate(b.data()['createdAt']);
+      return bd.compareTo(ad);
+    });
+
     _adminOrdersCache = loaded;
     _adminOrdersCacheAt = now;
     return loaded;
+  }
+
+  double _effectivePriceFromRow(Map<String, dynamic> row) {
+    final promo = row['promoPrice'];
+    if (promo is num && promo > 0) return promo.toDouble();
+    final base = row['price'];
+    if (base is num && base > 0) return base.toDouble();
+    return 0.0;
+  }
+
+  Future<Map<String, int>> backfillLegacyOrderItems({
+    int maxOrders = 0,
+  }) async {
+    Query<Map<String, dynamic>> query = _db.collectionGroup('orders');
+    if (maxOrders > 0) {
+      query = query.limit(maxOrders);
+    }
+    final ordersSnap = await query.get();
+
+    final productCache = <String, Map<String, dynamic>>{};
+    final priceCache = <String, Map<String, Map<String, dynamic>>>{};
+
+    Future<Map<String, dynamic>> productData(String productId) async {
+      final cached = productCache[productId];
+      if (cached != null) return cached;
+      try {
+        final snap = await _db.collection('products').doc(productId).get();
+        final data = snap.data() ?? const <String, dynamic>{};
+        productCache[productId] = data;
+        return data;
+      } on FirebaseException {
+        productCache[productId] = const <String, dynamic>{};
+        return const <String, dynamic>{};
+      }
+    }
+
+    Future<Map<String, Map<String, dynamic>>> priceMap(String productId) async {
+      final cached = priceCache[productId];
+      if (cached != null) return cached;
+      final map = <String, Map<String, dynamic>>{};
+      try {
+        final snap =
+            await _db.collection('products').doc(productId).collection('prices').get();
+        for (final doc in snap.docs) {
+          final sid = (doc.data()['storeId'] ?? doc.id).toString().trim();
+          if (sid.isEmpty) continue;
+          map[sid] = doc.data();
+        }
+      } on FirebaseException {
+        // Ignore and leave map empty; backfill will use other fallbacks.
+      }
+      priceCache[productId] = map;
+      return map;
+    }
+
+    int scanned = 0;
+    int updated = 0;
+    int failed = 0;
+    int skipped = 0;
+    int writesInBatch = 0;
+    WriteBatch batch = _db.batch();
+
+    Future<void> flushBatch() async {
+      if (writesInBatch == 0) return;
+      await batch.commit();
+      batch = _db.batch();
+      writesInBatch = 0;
+    }
+
+    for (final orderDoc in ordersSnap.docs) {
+      scanned++;
+      try {
+        final order = orderDoc.data();
+        final rawItems = order['items'];
+        if (rawItems is! List) {
+          skipped++;
+          continue;
+        }
+
+        bool changed = false;
+        final rebuilt = <Map<String, dynamic>>[];
+
+        for (final rawItem in rawItems) {
+          if (rawItem is! Map) continue;
+          final item = Map<String, dynamic>.from(rawItem);
+
+          final productId = _asText(item['productId']).trim();
+          int qty = _asInt(item['qty'], fallback: 1);
+          if (qty <= 0) qty = 1;
+
+          String storeId = _asText(item['storeId']).trim();
+          String storeName = _asText(item['storeName']).trim();
+          String category = _asText(item['category']).trim();
+          double unitPrice = _asDouble(item['unitPrice']);
+          double lineTotal = _asDouble(item['lineTotal']);
+
+          if (productId.isNotEmpty) {
+            final product = await productData(productId);
+            final prices = await priceMap(productId);
+
+            if (storeId.isEmpty) {
+              if (prices.length == 1) {
+                storeId = prices.keys.first;
+              } else {
+                final fromProduct = _asText(product['storeId']).trim();
+                if (fromProduct.isNotEmpty) {
+                  storeId = fromProduct;
+                }
+              }
+            }
+
+            if (storeName.isEmpty && storeId.isNotEmpty) {
+              final priceRow = prices[storeId];
+              if (priceRow != null) {
+                storeName = _asText(priceRow['storeName']).trim();
+              }
+            }
+
+            if (category.isEmpty) {
+              category = _asText(product['category']).trim();
+            }
+
+            if (unitPrice <= 0) {
+              if (storeId.isNotEmpty && prices.containsKey(storeId)) {
+                unitPrice = _effectivePriceFromRow(prices[storeId]!);
+              }
+              if (unitPrice <= 0 && prices.isNotEmpty) {
+                var best = 0.0;
+                for (final row in prices.values) {
+                  final p = _effectivePriceFromRow(row);
+                  if (p <= 0) continue;
+                  if (best == 0 || p < best) best = p;
+                }
+                unitPrice = best;
+              }
+              if (unitPrice <= 0 && lineTotal > 0 && qty > 0) {
+                unitPrice = lineTotal / qty;
+              }
+            }
+          }
+
+          if (lineTotal <= 0 && unitPrice > 0) {
+            lineTotal = _round2(unitPrice * qty);
+          }
+
+          final patched = <String, dynamic>{
+            ...item,
+            'qty': qty,
+            if (storeId.isNotEmpty) 'storeId': storeId,
+            if (storeName.isNotEmpty) 'storeName': storeName,
+            if (category.isNotEmpty) 'category': category,
+            if (unitPrice > 0) 'unitPrice': _round2(unitPrice),
+            if (lineTotal > 0) 'lineTotal': _round2(lineTotal),
+          };
+
+          if (_asInt(item['qty'], fallback: 1) != qty) changed = true;
+          if (_asText(item['storeId']).trim() != storeId && storeId.isNotEmpty) {
+            changed = true;
+          }
+          if (_asText(item['storeName']).trim() != storeName &&
+              storeName.isNotEmpty) {
+            changed = true;
+          }
+          if (_asText(item['category']).trim() != category && category.isNotEmpty) {
+            changed = true;
+          }
+          if (_asDouble(item['unitPrice']) != 0 &&
+              unitPrice > 0 &&
+              (_asDouble(item['unitPrice']) - _round2(unitPrice)).abs() > 0.009) {
+            changed = true;
+          }
+          if (_asDouble(item['unitPrice']) == 0 && unitPrice > 0) changed = true;
+          if (_asDouble(item['lineTotal']) == 0 && lineTotal > 0) changed = true;
+
+          rebuilt.add(patched);
+        }
+
+        if (!changed) {
+          skipped++;
+          continue;
+        }
+
+        batch.set(orderDoc.reference, {
+          'items': rebuilt,
+          'backfilledAt': FieldValue.serverTimestamp(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+        writesInBatch++;
+        updated++;
+
+        if (writesInBatch >= 300) {
+          await flushBatch();
+        }
+      } catch (_) {
+        failed++;
+      }
+    }
+
+    await flushBatch();
+    _invalidateOrderCaches();
+    return {
+      'scanned': scanned,
+      'updated': updated,
+      'skipped': skipped,
+      'failed': failed,
+    };
   }
 
   Stream<QuerySnapshot<Map<String, dynamic>>> myAssignedDeliveriesStream() {
@@ -684,11 +1229,12 @@ class FirestoreService {
     }, SetOptions(merge: true));
 
     final deliveryUid =
-    (data['deliveryUid'] ?? existing['deliveryUid'] ?? '').toString();
+        (data['deliveryUid'] ?? existing['deliveryUid'] ?? '').toString();
 
     if (deliveryUid.isNotEmpty) {
-      final deliveryEmail =
-      _asText(data['deliveryEmail'] ?? existing['deliveryEmail']);
+      final deliveryEmail = _asText(
+        data['deliveryEmail'] ?? existing['deliveryEmail'],
+      );
       final deliveryStatus = _asText(
         data['deliveryStatus'] ?? existing['deliveryStatus'],
         fallback: 'Assigned',
@@ -702,8 +1248,9 @@ class FirestoreService {
           fallback: _defaultDeliveryFee,
         ),
       );
-      final address =
-      _asText(existing['deliveryAddress'] ?? existing['address']);
+      final address = _asText(
+        existing['deliveryAddress'] ?? existing['address'],
+      );
       final customerPhone = _asText(existing['customerPhone']);
 
       final assignedRef = _db
@@ -728,6 +1275,7 @@ class FirestoreService {
 
     try {
       await batch.commit();
+      _invalidateOrderCaches();
     } on FirebaseException catch (e) {
       if (e.code != 'permission-denied') rethrow;
 
@@ -735,7 +1283,112 @@ class FirestoreService {
         ...data,
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
+      _invalidateOrderCaches();
     }
+  }
+
+  Future<void> updateOrderStatusByPath({
+    required String orderPath,
+    required String status,
+  }) async {
+    final raw = status.trim();
+    if (raw.isEmpty) return;
+
+    final orderRef = _db.doc(orderPath);
+    final snap = await orderRef.get();
+    final data = snap.data() ?? const <String, dynamic>{};
+    final currentStatus = _asText(data['status']);
+    final currentDeliveryStatus = _asText(data['deliveryStatus']);
+    if (_isFinalOrderState(
+      status: currentStatus,
+      deliveryStatus: currentDeliveryStatus,
+    )) {
+      throw StateError('Delivered orders cannot change status.');
+    }
+
+    final normalized = raw.toLowerCase();
+    String nextStatus = raw;
+    String? nextDeliveryStatus;
+
+    if (normalized == 'cancelled' || normalized == 'canceled') {
+      await _cancelOrderWithWalletRefund(
+        orderPath: orderPath,
+        cancelledBy: 'super_admin',
+      );
+      return;
+    }
+
+    if (normalized == 'to ship' || normalized == 'assigned') {
+      nextStatus = 'To Ship';
+      nextDeliveryStatus = 'Assigned';
+    } else if (normalized == 'processing') {
+      nextStatus = 'Processing';
+      nextDeliveryStatus = 'Assigned';
+    } else if (normalized == 'shipping') {
+      nextStatus = 'Shipping';
+      nextDeliveryStatus = 'On The Way';
+    } else if (normalized == 'to receive' || normalized == 'on the way') {
+      nextStatus = 'To Receive';
+      nextDeliveryStatus = 'On The Way';
+    } else if (normalized == 'delivered' || normalized == 'completed') {
+      nextStatus = 'Completed';
+      nextDeliveryStatus = 'Delivered';
+    }
+
+    final payload = <String, dynamic>{'status': nextStatus};
+    if (nextDeliveryStatus != null) {
+      payload['deliveryStatus'] = nextDeliveryStatus;
+    }
+
+    await updateOrderByPath(orderPath: orderPath, data: payload);
+  }
+
+  Future<void> updateDeliveryProgressByPath({
+    required String orderPath,
+    required String deliveryStatus,
+  }) async {
+    final raw = deliveryStatus.trim();
+    if (raw.isEmpty) return;
+
+    final orderRef = _db.doc(orderPath);
+    final snap = await orderRef.get();
+    final data = snap.data() ?? const <String, dynamic>{};
+    final currentStatus = _asText(data['status']);
+    final currentDeliveryStatus = _asText(data['deliveryStatus']);
+    if (_isFinalOrderState(
+      status: currentStatus,
+      deliveryStatus: currentDeliveryStatus,
+    )) {
+      throw StateError('Delivered orders cannot change status.');
+    }
+
+    String nextDeliveryStatus = raw;
+    String nextStatus = 'To Ship';
+    final normalized = raw.toLowerCase();
+
+    if (normalized == 'cancelled' || normalized == 'canceled') {
+      await _cancelOrderWithWalletRefund(
+        orderPath: orderPath,
+        cancelledBy: 'delivery',
+      );
+      return;
+    }
+
+    if (normalized == 'on the way') {
+      nextDeliveryStatus = 'On The Way';
+      nextStatus = 'To Receive';
+    } else if (normalized == 'delivered') {
+      nextDeliveryStatus = 'Delivered';
+      nextStatus = 'Completed';
+    } else {
+      nextDeliveryStatus = 'Assigned';
+      nextStatus = 'To Ship';
+    }
+
+    await updateOrderByPath(
+      orderPath: orderPath,
+      data: {'deliveryStatus': nextDeliveryStatus, 'status': nextStatus},
+    );
   }
 
   Future<void> assignDelivery({
@@ -745,6 +1398,14 @@ class FirestoreService {
   }) async {
     final orderRef = _db.doc(orderPath);
     final orderSnap = await orderRef.get();
+    final currentStatus = _asText(orderSnap.data()?['status']);
+    final currentDeliveryStatus = _asText(orderSnap.data()?['deliveryStatus']);
+    if (_isFinalOrderState(
+      status: currentStatus,
+      deliveryStatus: currentDeliveryStatus,
+    )) {
+      throw StateError('Delivered orders cannot be reassigned.');
+    }
     final oldDeliveryUid = _asText(orderSnap.data()?['deliveryUid']);
 
     final existingFee = _asDouble(
@@ -803,6 +1464,95 @@ class FirestoreService {
     }
 
     await batch.commit();
+    _invalidateOrderCaches();
+  }
+
+  Future<void> _cancelOrderWithWalletRefund({
+    required String orderPath,
+    required String cancelledBy,
+  }) async {
+    final orderRef = _db.doc(orderPath);
+    final orderId = orderRef.id;
+
+    await _db.runTransaction((txn) async {
+      final orderSnap = await txn.get(orderRef);
+      final data = orderSnap.data() ?? const <String, dynamic>{};
+      if (data.isEmpty) {
+        throw StateError('Order not found.');
+      }
+
+      final status = _asText(data['status']).toLowerCase();
+      final deliveryStatus = _asText(data['deliveryStatus']).toLowerCase();
+      final paymentStatus = _asText(data['paymentStatus']).toLowerCase();
+      final refundStatus = _asText(data['refundStatus']).toLowerCase();
+      final total = _round2(_asDouble(data['total']));
+      final userIdFromDoc = _asText(data['userId']);
+      final userId =
+          userIdFromDoc.isNotEmpty
+              ? userIdFromDoc
+              : _userIdFromOrderPath(orderPath);
+
+      final alreadyCancelled =
+          status == 'cancelled' || deliveryStatus == 'cancelled';
+      final shouldRefund =
+          !alreadyCancelled &&
+          paymentStatus == 'paid' &&
+          refundStatus != 'refunded' &&
+          userId.isNotEmpty &&
+          total > 0;
+
+      final payload = <String, dynamic>{
+        'status': 'Cancelled',
+        'deliveryStatus': 'Cancelled',
+        'cancelledBy': cancelledBy,
+        'cancelledAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      };
+
+      if (shouldRefund) {
+        final userRef = _userDoc(userId);
+        final userSnap = await txn.get(userRef);
+        final userData = userSnap.data() ?? const <String, dynamic>{};
+        final currentWallet = _round2(_asDouble(userData['walletBalance']));
+        final nextWallet = _round2(currentWallet + total);
+
+        payload.addAll({
+          'refundStatus': 'refunded',
+          'refundAmount': total,
+          'refundTarget': 'wallet',
+          'refundReason': 'order_cancelled_by_admin',
+          'refundedBy': cancelledBy,
+          'refundedAt': FieldValue.serverTimestamp(),
+        });
+
+        txn.set(userRef, {
+          'walletBalance': nextWallet,
+          'updatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+
+        final walletTxRef = userRef
+            .collection('wallet_transactions')
+            .doc('refund_$orderId');
+        txn.set(walletTxRef, {
+          'type': 'refund',
+          'source': 'order_cancelled_by_admin',
+          'orderId': orderId,
+          'amount': total,
+          'currency': 'MYR',
+          'createdAt': FieldValue.serverTimestamp(),
+          'createdBy': cancelledBy,
+        }, SetOptions(merge: true));
+      } else if (refundStatus.isEmpty) {
+        payload['refundStatus'] = 'not_required';
+      }
+
+      txn.set(orderRef, payload, SetOptions(merge: true));
+    });
+
+    await updateOrderByPath(
+      orderPath: orderPath,
+      data: {'status': 'Cancelled', 'deliveryStatus': 'Cancelled'},
+    );
   }
 
   Future<Map<String, dynamic>> salesSummary({bool forceRefresh = false}) async {

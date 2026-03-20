@@ -93,88 +93,119 @@ class ProductGridCard extends StatelessWidget {
           borderRadius: BorderRadius.circular(14),
           border: Border.all(color: const Color(0xFFE6E6E6)),
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              height: 110,
-              decoration: BoxDecoration(
-                color: const Color(0xFFEDEDED),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: _isHttpImageUrl(imageUrl)
-                  ? ClipRRect(
-                      borderRadius: BorderRadius.circular(10),
-                      child: Image.network(
-                        imageUrl!,
-                        width: double.infinity,
-                        height: double.infinity,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) {
-                          return Center(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final imageHeight = (constraints.maxHeight * 0.44).clamp(
+              86.0,
+              110.0,
+            );
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  height: imageHeight,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFEDEDED),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child:
+                      _isHttpImageUrl(imageUrl)
+                          ? ClipRRect(
+                            borderRadius: BorderRadius.circular(10),
+                            child: Image.network(
+                              imageUrl!,
+                              width: double.infinity,
+                              height: double.infinity,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) {
+                                return Center(
+                                  child: Icon(
+                                    fallbackIcon,
+                                    color: Colors.black45,
+                                  ),
+                                );
+                              },
+                            ),
+                          )
+                          : Center(
                             child: Icon(fallbackIcon, color: Colors.black45),
-                          );
-                        },
+                          ),
+                ),
+                const SizedBox(height: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 13,
+                        ),
                       ),
-                    )
-                  : Center(
-                      child: Icon(fallbackIcon, color: Colors.black45),
-                    ),
-            ),
-            const SizedBox(height: 10),
-            Text(
-              title,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
-            ),
-            const SizedBox(height: 2),
-            if (stockQty != null)
-              Text(
-                isOutOfStock ? 'Stock: 0' : 'Stock: $stockQty',
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                  color: isOutOfStock ? Colors.redAccent : Colors.black54,
+                      const SizedBox(height: 2),
+                      if (stockQty != null)
+                        Text(
+                          isOutOfStock ? 'Stock: 0' : 'Stock: $stockQty',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color:
+                                isOutOfStock
+                                    ? Colors.redAccent
+                                    : Colors.black54,
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
-              ),
-            const Spacer(),
-            if (oldPrice == null)
-              Text(
-                price,
-                style: TextStyle(
-                  color: isOutOfStock ? Colors.redAccent : kOrange,
-                  fontWeight: FontWeight.w900,
-                  fontSize: 13,
-                ),
-              )
-            else
-              Row(
-                children: [
+                const SizedBox(height: 4),
+                if (oldPrice == null)
                   Text(
                     price,
-                    style: const TextStyle(
-                      color: kOrange,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: isOutOfStock ? Colors.redAccent : kOrange,
                       fontWeight: FontWeight.w900,
                       fontSize: 13,
                     ),
+                  )
+                else
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          price,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: kOrange,
+                            fontWeight: FontWeight.w900,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        oldPrice!,
+                        style: const TextStyle(
+                          color: Colors.black38,
+                          fontSize: 11,
+                          decoration: TextDecoration.lineThrough,
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 8),
-                  Text(
-                    oldPrice!,
-                    style: const TextStyle(
-                      color: Colors.black38,
-                      fontSize: 11,
-                      decoration: TextDecoration.lineThrough,
-                    ),
-                  ),
-                ],
-              ),
-          ],
+              ],
+            );
+          },
         ),
       ),
     );
   }
 }
-
-

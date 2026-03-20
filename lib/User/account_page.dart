@@ -19,6 +19,7 @@ import 'package:fyp/User/purchase_status_page.dart';
 import 'package:fyp/User/purchase_history_page.dart';
 import 'package:fyp/User/detail_ui.dart';
 import 'package:fyp/User/wallet_voucher_discount_page.dart';
+import 'package:fyp/User/voucher_page.dart';
 import 'package:fyp/User/activities_page.dart';
 import 'package:fyp/User/likes_page.dart';
 import 'package:fyp/User/recently_viewed_page.dart';
@@ -114,10 +115,7 @@ class _AccountPageState extends State<AccountPage> {
   }
 
   void _open(BuildContext context, Widget page) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => page),
-    );
+    Navigator.push(context, MaterialPageRoute(builder: (_) => page));
   }
 
   Future<void> _logout() async {
@@ -277,7 +275,9 @@ class _AccountPageState extends State<AccountPage> {
             AnimatedBuilder(
               animation: AppStore.instance,
               builder: (context, _) {
-                final toShipOrders = AppStore.instance.ordersByStatus("To Ship");
+                final toShipOrders = AppStore.instance.ordersByStatus(
+                  "To Ship",
+                );
                 var toShipCount = 0;
                 for (final order in toShipOrders) {
                   for (final item in order.items) {
@@ -326,27 +326,53 @@ class _AccountPageState extends State<AccountPage> {
 
             const SizedBox(height: 12),
 
-            _SectionCard(
-              title: "My Wallet",
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  _IconLabel(
-                    icon: Icons.wallet_outlined,
-                    label: "Card Detail",
-                    onTap: () {
-                      _open(context, const CardDetailPage());
-                    },
+            AnimatedBuilder(
+              animation: AppStore.instance,
+              builder: (context, _) {
+                final walletBalance = AppStore.instance.walletBalance;
+                return _SectionCard(
+                  title: "My Wallet",
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                        children: [
+                          _IconLabel(
+                            icon: Icons.wallet_outlined,
+                            label: "Card Detail",
+                            onTap: () {
+                              _open(context, const CardDetailPage());
+                            },
+                          ),
+                          _IconLabel(
+                            icon: Icons.account_balance_wallet_outlined,
+                            label: "E-Wallet",
+                            onTap: () {
+                              _open(context, const WalletVoucherDiscountPage());
+                            },
+                          ),
+                          _IconLabel(
+                            icon: Icons.discount_outlined,
+                            label: "Voucher",
+                            onTap: () {
+                              _open(context, const VoucherStandalonePage());
+                            },
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        'Balance: RM ${walletBalance.toStringAsFixed(2)}',
+                        style: const TextStyle(
+                          color: AccountPage.kOrange,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ],
                   ),
-                  _IconLabel(
-                    icon: Icons.discount_outlined,
-                    label: "Voucher",
-                    onTap: () {
-                      _open(context, const WalletVoucherDiscountPage());
-                    },
-                  ),
-                ],
-              ),
+                );
+              },
             ),
 
             const SizedBox(height: 12),
@@ -931,5 +957,3 @@ class _SmallChip extends StatelessWidget {
     );
   }
 }
-
-

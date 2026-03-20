@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:fyp/User/contact_us_page.dart';
+import 'package:fyp/User/feedback_form_page.dart';
 import 'package:fyp/User/privacy_policy_page.dart';
 import 'package:fyp/User/terms_and_condition_page.dart';
 
@@ -41,6 +42,14 @@ class TopMenuPage extends StatelessWidget {
               title: const Text('Privacy and Policy'),
               trailing: const Icon(Icons.chevron_right),
               onTap: () => _open(context, const PrivacyPolicyPage()),
+            ),
+          ),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.feedback_outlined),
+              title: const Text('Feedback Form'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => _open(context, const FeedbackFormPage()),
             ),
           ),
           Card(

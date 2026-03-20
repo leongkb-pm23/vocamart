@@ -1,14 +1,12 @@
 // How this file works:
-// 1) Data/models are declared first (if any).
-// 2) UI widgets are built in build() methods.
-// 3) Helper methods are used to keep UI code clean.
+// 1) Initializes Firebase.
+// 2) Registers named routes.
+// 3) Starts the app at AuthRouterGate.
 //
-// File purpose: This file handles main screen/logic.
+// File purpose: App entry point.
 
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 
 import 'package:fyp/User/firebase_options.dart';
 
@@ -40,9 +38,13 @@ import 'package:fyp/User/help_center_page.dart';
 import 'package:fyp/User/search_history_page.dart';
 import 'package:fyp/User/notifications_page.dart';
 
-// ADMIN / DELIVERY
+// ADMIN / DELIVERY / SUPER ADMIN
 import 'package:fyp/Admin/admin_panel_page.dart';
 import 'package:fyp/delivery_man/delivery_panel_page.dart';
+import 'package:fyp/super_admin/super_admin_panel_page.dart';
+
+// ROUTER
+import 'package:fyp/components/auth_router.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -52,22 +54,18 @@ Future<void> main() async {
   runApp(const MyApp());
 }
 
-/// Keep route names in one place.
 class AppRoutes {
-  // OTP (needs args)
   static const otp = '/otp';
 
-  // Account
   static const account = '/account';
   static const editProfile = '/edit-profile';
 
-  // Admin / Delivery
   static const adminPanel = '/admin-panel';
+  static const superAdminPanel = '/super-admin-panel';
   static const deliveryPanel = '/delivery-panel';
 
-  // Account features
   static const myTier = '/my-tier';
-  static const purchaseStatus = '/purchase-status'; // needs args
+  static const purchaseStatus = '/purchase-status';
   static const purchaseHistory = '/purchase-history';
   static const cardDetail = '/card-detail';
   static const walletVoucherDiscount = '/wallet-voucher-discount';
@@ -79,7 +77,6 @@ class AppRoutes {
   static const notifications = '/notifications';
 }
 
-// This class defines MyApp, used for this page/feature.
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
@@ -112,8 +109,9 @@ class MyApp extends StatelessWidget {
       AppRoutes.searchHistory: (_) => const SearchHistoryPage(),
       AppRoutes.notifications: (_) => const NotificationsPage(),
 
-      // ADMIN / DELIVERY
+      // ADMIN / DELIVERY / SUPER ADMIN
       AppRoutes.adminPanel: (_) => const AdminPanelPage(),
+      AppRoutes.superAdminPanel: (_) => const SuperAdminPanelPage(),
       AppRoutes.deliveryPanel: (_) => const DeliveryPanelPage(),
     };
   }
@@ -151,14 +149,8 @@ class MyApp extends StatelessWidget {
         ),
         scaffoldBackgroundColor: Colors.white,
       ),
-
-      // Auth gate decides first screen.
-      home: const AuthGate(),
-
-      // Static routes.
+      home: const AuthRouterGate(),
       routes: _appRoutes(),
-
-      // Dynamic routes.
       onGenerateRoute: (settings) {
         if (settings.name == AppRoutes.otp) {
           final args = settings.arguments;
@@ -198,98 +190,6 @@ class MyApp extends StatelessWidget {
         }
 
         return null;
-      },
-    );
-  }
-}
-
-/// Auth gate: guest/login/user/admin/delivery role routing.
-class AuthGate extends StatelessWidget {
-  const AuthGate({super.key});
-
-  Widget _loadingView() {
-    return const Scaffold(
-      body: Center(child: CircularProgressIndicator()),
-    );
-  }
-
-  Future<bool> _safeDocExists(
-      DocumentReference<Map<String, dynamic>> ref,
-      ) async {
-    try {
-      final snap = await ref.get();
-      return snap.exists;
-    } on FirebaseException catch (e) {
-      if (e.code == 'permission-denied') return false;
-      rethrow;
-    }
-  }
-
-  Future<String> _roleFor(User user) async {
-    if (user.isAnonymous) return 'guest';
-
-    final db = FirebaseFirestore.instance;
-
-    final isAdmin = await _safeDocExists(
-      db.collection('admins').doc(user.uid),
-    );
-    if (isAdmin) return 'admin';
-
-    final isDelivery = await _safeDocExists(
-      db.collection('delivery_staff').doc(user.uid),
-    );
-    if (isDelivery) return 'delivery';
-
-    // Fallback if delivery_staff collection read is restricted.
-    try {
-      final userDoc = await db.collection('users').doc(user.uid).get();
-      final data = userDoc.data() ?? const <String, dynamic>{};
-
-      if ((data['role'] ?? '').toString().toLowerCase() == 'delivery') {
-        return 'delivery';
-      }
-      if (data['isDelivery'] == true) {
-        return 'delivery';
-      }
-    } on FirebaseException catch (_) {}
-
-    return 'user';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return StreamBuilder<User?>(
-      stream: FirebaseAuth.instance.authStateChanges(),
-      builder: (context, snap) {
-        if (snap.connectionState == ConnectionState.waiting) {
-          return _loadingView();
-        }
-
-        final authUser = snap.data;
-        if (authUser == null) {
-          return const LoginPage();
-        }
-
-        return FutureBuilder<String>(
-          future: _roleFor(authUser),
-          builder: (context, roleSnap) {
-            if (roleSnap.connectionState == ConnectionState.waiting) {
-              return _loadingView();
-            }
-
-            final role = roleSnap.data ?? 'user';
-
-            if (role == 'admin') {
-              return const AdminPanelPage();
-            }
-
-            if (role == 'delivery') {
-              return const DeliveryPanelPage();
-            }
-
-            return const HomePage();
-          },
-        );
       },
     );
   }

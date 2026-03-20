@@ -8,7 +8,10 @@
 import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
+import 'package:intl_phone_field/intl_phone_field.dart';
 import 'package:intl/intl.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:pdf/pdf.dart';
@@ -29,11 +32,11 @@ class UsersAdminTab extends StatelessWidget {
   }
 
   Future<bool> _confirm(
-    BuildContext context,
-    String title,
-    String message, {
-    String confirmText = 'Yes',
-  }) async {
+      BuildContext context,
+      String title,
+      String message, {
+        String confirmText = 'Yes',
+      }) async {
     return showConfirmDialog(
       context,
       title: title,
@@ -56,14 +59,14 @@ class UsersAdminTab extends StatelessWidget {
   }
 
   Future<void> _setRole(
-    BuildContext context,
-    String userId,
-    Map<String, dynamic> data,
-    String newRole,
-  ) async {
+      BuildContext context,
+      String userId,
+      Map<String, dynamic> data,
+      String newRole,
+      ) async {
     final name =
-        (data['name'] ?? data['displayName'] ?? data['email'] ?? userId)
-            .toString();
+    (data['name'] ?? data['displayName'] ?? data['email'] ?? userId)
+        .toString();
 
     final ok = await _confirm(
       context,
@@ -74,10 +77,56 @@ class UsersAdminTab extends StatelessWidget {
     if (!ok) return;
 
     try {
-      await FirebaseFirestore.instance.collection('users').doc(userId).set({
+      final db = FirebaseFirestore.instance;
+      final batch = db.batch();
+      final userRef = db.collection('users').doc(userId);
+      final adminRef = db.collection('admins').doc(userId);
+      final superRef = db.collection('super_admins').doc(userId);
+      final deliveryRef = db.collection('delivery_staff').doc(userId);
+
+      final payload = {
         'role': newRole,
         'updatedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+      };
+      if (newRole != 'admin') {
+        payload['storeId'] = FieldValue.delete();
+        payload['storeName'] = FieldValue.delete();
+      }
+      batch.set(userRef, payload, SetOptions(merge: true));
+
+      if (newRole == 'super_admin') {
+        batch.set(superRef, {
+          'email': (data['email'] ?? '').toString(),
+          'name': (data['name'] ?? data['displayName'] ?? '').toString(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+        batch.delete(adminRef);
+        batch.delete(deliveryRef);
+      } else if (newRole == 'admin') {
+        batch.set(adminRef, {
+          'email': (data['email'] ?? '').toString(),
+          'name': (data['name'] ?? data['displayName'] ?? '').toString(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+        batch.delete(superRef);
+        batch.delete(deliveryRef);
+      } else if (newRole == 'delivery') {
+        batch.set(deliveryRef, {
+          'email': (data['email'] ?? '').toString(),
+          'name': (data['name'] ?? data['displayName'] ?? '').toString(),
+          'enabled': true,
+          'deliveryOnDuty': (data['deliveryOnDuty'] ?? true) == true,
+          'updatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+        batch.delete(superRef);
+        batch.delete(adminRef);
+      } else {
+        batch.delete(superRef);
+        batch.delete(adminRef);
+        batch.delete(deliveryRef);
+      }
+
+      await batch.commit();
 
       if (context.mounted) {
         _showMsg(context, 'Role updated to $newRole.');
@@ -92,14 +141,14 @@ class UsersAdminTab extends StatelessWidget {
   }
 
   Future<void> _toggleBlocked(
-    BuildContext context,
-    String userId,
-    Map<String, dynamic> data,
-  ) async {
+      BuildContext context,
+      String userId,
+      Map<String, dynamic> data,
+      ) async {
     final blocked = (data['blocked'] ?? false) == true;
     final name =
-        (data['name'] ?? data['displayName'] ?? data['email'] ?? userId)
-            .toString();
+    (data['name'] ?? data['displayName'] ?? data['email'] ?? userId)
+        .toString();
 
     final ok = await _confirm(
       context,
@@ -138,31 +187,94 @@ class UsersAdminTab extends StatelessWidget {
   }
 
   Future<void> _addOrEditUser(
-    BuildContext context, {
-    String? userId,
-    Map<String, dynamic>? data,
-  }) async {
+      BuildContext context, {
+        String? userId,
+        Map<String, dynamic>? data,
+      }) async {
     final formKey = GlobalKey<FormState>();
-    final idCtrl = TextEditingController(text: userId ?? '');
+    final isAddMode = userId == null;
     final nameCtrl = TextEditingController(
       text: (data?['name'] ?? data?['displayName'] ?? '').toString(),
     );
     final emailCtrl = TextEditingController(
       text: (data?['email'] ?? '').toString(),
     );
-    final phoneCtrl = TextEditingController(
-      text: (data?['phone'] ?? '').toString(),
-    );
+    final phoneCtrl = TextEditingController();
     final addressCtrl = TextEditingController(
       text: (data?['address'] ?? '').toString(),
     );
+    final passwordCtrl = TextEditingController();
+    final confirmPasswordCtrl = TextEditingController();
 
     var role = (data?['role'] ?? 'user').toString().trim();
     if (role.isEmpty) role = 'user';
     var blocked = (data?['blocked'] ?? false) == true;
     var onDuty = (data?['deliveryOnDuty'] ?? true) == true;
+    var gender = (data?['gender'] ?? '').toString().trim().toLowerCase();
+    if (gender != 'male' && gender != 'female') gender = '';
+    DateTime? dob;
+    final rawDob = data?['dob'];
+    if (rawDob is Timestamp) {
+      dob = rawDob.toDate();
+    } else if (rawDob is DateTime) {
+      dob = rawDob;
+    }
     var saving = false;
+    var obscurePw = true;
+    var obscureConfirm = true;
+    var phoneE164 = (data?['phone'] ?? '').toString().trim();
     String? errorText;
+    final emailPattern = RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$');
+
+    bool hasUpper(String s) => RegExp(r'[A-Z]').hasMatch(s);
+    bool hasLower(String s) => RegExp(r'[a-z]').hasMatch(s);
+    bool hasNumber(String s) => RegExp(r'\d').hasMatch(s);
+    bool hasSymbol(String s) => RegExp(r'[@#*]').hasMatch(s);
+
+    bool pwAllOk(String s) {
+      return s.length >= 8 &&
+          hasUpper(s) &&
+          hasLower(s) &&
+          hasNumber(s) &&
+          hasSymbol(s);
+    }
+
+    Widget ruleItem(bool ok, String text) {
+      return Row(
+        children: [
+          Icon(
+            ok ? Icons.check_circle : Icons.cancel,
+            size: 16,
+            color: ok ? Colors.green : Colors.red,
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              text,
+              style: TextStyle(
+                color: ok ? Colors.green : Colors.red,
+                fontSize: 12,
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
+    int ageFromDob(DateTime value) {
+      final today = DateTime.now();
+      int age = today.year - value.year;
+      final hadBirthday =
+          (today.month > value.month) ||
+              (today.month == value.month && today.day >= value.day);
+      if (!hadBirthday) age--;
+      return age;
+    }
+
+    String formatDob(DateTime value) {
+      String two(int n) => n.toString().padLeft(2, '0');
+      return '${two(value.day)}/${two(value.month)}/${value.year}';
+    }
 
     await showDialog(
       context: context,
@@ -174,33 +286,21 @@ class UsersAdminTab extends StatelessWidget {
               content: SingleChildScrollView(
                 child: Form(
                   key: formKey,
-                  autovalidateMode: AutovalidateMode.onUserInteraction,
+                  autovalidateMode: AutovalidateMode.always,
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      TextFormField(
-                        controller: idCtrl,
-                        enabled: userId == null,
-                        decoration: const InputDecoration(
-                          labelText: 'User ID',
-                          border: OutlineInputBorder(),
-                        ),
-                        validator: (v) {
-                          final text = (v ?? '').trim();
-                          if (text.isEmpty) return 'User ID is required.';
-                          if (text.contains(' ')) return 'User ID cannot contain spaces.';
-                          return null;
-                        },
-                      ),
-                      const SizedBox(height: 10),
                       TextFormField(
                         controller: nameCtrl,
                         decoration: const InputDecoration(
                           labelText: 'Name',
                           border: OutlineInputBorder(),
                         ),
-                        validator: (v) =>
-                            (v ?? '').trim().isEmpty ? 'Name is required.' : null,
+                        validator: (v) {
+                          final value = (v ?? '').trim();
+                          if (value.isEmpty) return 'Name is required';
+                          return null;
+                        },
                       ),
                       const SizedBox(height: 10),
                       TextFormField(
@@ -210,15 +310,41 @@ class UsersAdminTab extends StatelessWidget {
                           labelText: 'Email',
                           border: OutlineInputBorder(),
                         ),
+                        validator: (v) {
+                          final value = (v ?? '').trim();
+                          if (value.isEmpty) return 'Email is required';
+                          if (!emailPattern.hasMatch(value)) {
+                            return 'Enter a valid email';
+                          }
+                          return null;
+                        },
                       ),
                       const SizedBox(height: 10),
-                      TextFormField(
+                      IntlPhoneField(
                         controller: phoneCtrl,
-                        keyboardType: TextInputType.phone,
+                        initialCountryCode: 'MY',
+                        disableLengthCheck: true,
                         decoration: const InputDecoration(
                           labelText: 'Phone',
                           border: OutlineInputBorder(),
+                          isDense: true,
+                          contentPadding: EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 14,
+                          ),
                         ),
+                        validator: (phone) {
+                          if (phone == null || phone.number.trim().isEmpty) {
+                            return 'Phone number is required';
+                          }
+                          if (!RegExp(r'^\d+$').hasMatch(phone.number)) {
+                            return 'Digits only';
+                          }
+                          return null;
+                        },
+                        onChanged: (phone) {
+                          phoneE164 = phone.completeNumber;
+                        },
                       ),
                       const SizedBox(height: 10),
                       TextFormField(
@@ -228,7 +354,189 @@ class UsersAdminTab extends StatelessWidget {
                           labelText: 'Address',
                           border: OutlineInputBorder(),
                         ),
+                        validator: (v) {
+                          final value = (v ?? '').trim();
+                          if (value.isEmpty) return 'Address is required';
+                          return null;
+                        },
                       ),
+                      const SizedBox(height: 10),
+                      DropdownButtonFormField<String>(
+                        value: gender.isEmpty ? null : gender,
+                        decoration: const InputDecoration(
+                          labelText: 'Gender',
+                          border: OutlineInputBorder(),
+                        ),
+                        items: const [
+                          DropdownMenuItem(value: 'male', child: Text('Male')),
+                          DropdownMenuItem(
+                            value: 'female',
+                            child: Text('Female'),
+                          ),
+                        ],
+                        onChanged: (v) {
+                          setDialogState(() => gender = (v ?? '').trim());
+                        },
+                        validator: (v) {
+                          final value = (v ?? '').trim();
+                          if (value.isEmpty) return 'Gender is required';
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 10),
+                      FormField<String>(
+                        initialValue: dob == null ? '' : formatDob(dob!),
+                        autovalidateMode: AutovalidateMode.onUserInteraction,
+                        validator: (_) {
+                          if (dob == null) return 'Date of birth is required';
+                          if (ageFromDob(dob!) < 18) {
+                            return 'You must be at least 18 years old';
+                          }
+                          return null;
+                        },
+                        builder: (field) {
+                          final hasError = field.errorText != null;
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              InkWell(
+                                onTap: () async {
+                                  final now = DateTime.now();
+                                  final initial =
+                                      dob ??
+                                          DateTime(
+                                            now.year - 18,
+                                            now.month,
+                                            now.day,
+                                          );
+                                  final picked = await showDatePicker(
+                                    context: dialogContext,
+                                    initialDate: initial,
+                                    firstDate: DateTime(1900),
+                                    lastDate: now,
+                                  );
+                                  if (picked == null) return;
+                                  setDialogState(() => dob = picked);
+                                  field.didChange(formatDob(picked));
+                                  field.validate();
+                                },
+                                child: InputDecorator(
+                                  decoration: InputDecoration(
+                                    labelText: 'Date of Birth',
+                                    border: const OutlineInputBorder(),
+                                    errorText:
+                                    hasError ? field.errorText : null,
+                                  ),
+                                  child: Text(
+                                    dob == null
+                                        ? 'DD/MM/YYYY'
+                                        : formatDob(dob!),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          );
+                        },
+                      ),
+                      if (isAddMode) ...[
+                        const SizedBox(height: 10),
+                        TextFormField(
+                          controller: passwordCtrl,
+                          obscureText: obscurePw,
+                          onChanged: (_) => setDialogState(() {}),
+                          decoration: InputDecoration(
+                            labelText: 'Password',
+                            border: const OutlineInputBorder(),
+                            suffixIcon: IconButton(
+                              onPressed: () {
+                                setDialogState(() => obscurePw = !obscurePw);
+                              },
+                              icon: Icon(
+                                obscurePw
+                                    ? Icons.visibility_off
+                                    : Icons.visibility,
+                              ),
+                            ),
+                          ),
+                          validator: (v) {
+                            final value = v ?? '';
+                            if (value.isEmpty) return 'Password is required';
+                            if (value.length < 8) {
+                              return 'Password must be at least 8 characters';
+                            }
+                            if (!hasNumber(value)) {
+                              return 'Password must contain numbers';
+                            }
+                            if (!hasUpper(value)) {
+                              return 'Password must contain uppercase';
+                            }
+                            if (!hasLower(value)) {
+                              return 'Password must contain lowercase';
+                            }
+                            if (!hasSymbol(value)) {
+                              return 'Password must have at least one @#* symbol';
+                            }
+                            return null;
+                          },
+                        ),
+                        const SizedBox(height: 8),
+                        ruleItem(
+                          hasNumber(passwordCtrl.text),
+                          'Password must contain numbers',
+                        ),
+                        ruleItem(
+                          hasUpper(passwordCtrl.text),
+                          'Password must contain uppercase',
+                        ),
+                        ruleItem(
+                          hasLower(passwordCtrl.text),
+                          'Password must contain lowercase',
+                        ),
+                        ruleItem(
+                          hasSymbol(passwordCtrl.text),
+                          'Password must have at least one @#* symbol',
+                        ),
+                        ruleItem(
+                          passwordCtrl.text.length >= 8,
+                          'Password length min 8',
+                        ),
+                        const SizedBox(height: 10),
+                        TextFormField(
+                          controller: confirmPasswordCtrl,
+                          obscureText: obscureConfirm,
+                          onChanged: (_) => setDialogState(() {}),
+                          decoration: InputDecoration(
+                            labelText: 'Confirm Password',
+                            border: const OutlineInputBorder(),
+                            suffixIcon: IconButton(
+                              onPressed: () {
+                                setDialogState(
+                                      () => obscureConfirm = !obscureConfirm,
+                                );
+                              },
+                              icon: Icon(
+                                obscureConfirm
+                                    ? Icons.visibility_off
+                                    : Icons.visibility,
+                              ),
+                            ),
+                          ),
+                          validator: (v) {
+                            final value = v ?? '';
+                            if (value.isEmpty) return 'Confirm your password';
+                            if (value != passwordCtrl.text) {
+                              return 'Passwords do not match';
+                            }
+                            return null;
+                          },
+                        ),
+                        const SizedBox(height: 8),
+                        ruleItem(
+                          confirmPasswordCtrl.text.isNotEmpty &&
+                              confirmPasswordCtrl.text == passwordCtrl.text,
+                          'Confirm password must match',
+                        ),
+                      ],
                       const SizedBox(height: 10),
                       DropdownButtonFormField<String>(
                         value: role,
@@ -238,7 +546,14 @@ class UsersAdminTab extends StatelessWidget {
                         ),
                         items: const [
                           DropdownMenuItem(value: 'user', child: Text('User')),
-                          DropdownMenuItem(value: 'admin', child: Text('Admin')),
+                          DropdownMenuItem(
+                            value: 'admin',
+                            child: Text('Store Admin'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'super_admin',
+                            child: Text('Super Admin'),
+                          ),
                           DropdownMenuItem(
                             value: 'delivery',
                             child: Text('Delivery'),
@@ -248,6 +563,11 @@ class UsersAdminTab extends StatelessWidget {
                           setDialogState(() {
                             role = (v ?? 'user').trim();
                           });
+                        },
+                        validator: (v) {
+                          final value = (v ?? '').trim();
+                          if (value.isEmpty) return 'Role is required';
+                          return null;
                         },
                       ),
                       const SizedBox(height: 6),
@@ -289,55 +609,240 @@ class UsersAdminTab extends StatelessWidget {
                   child: const Text('Cancel'),
                 ),
                 ElevatedButton(
-                  onPressed: !saving
+                  onPressed:
+                  !saving
                       ? () async {
-                          if (!formKey.currentState!.validate()) return;
+                    if (!formKey.currentState!.validate()) return;
+                    if ((phoneE164).trim().isEmpty) {
+                      setDialogState(() {
+                        errorText = 'Phone number is required';
+                      });
+                      return;
+                    }
+                    if (isAddMode && !pwAllOk(passwordCtrl.text)) {
+                      setDialogState(() {
+                        errorText =
+                        'Password does not meet the requirements.';
+                      });
+                      return;
+                    }
+                    if (gender.isEmpty) {
+                      setDialogState(() {
+                        errorText = 'Gender is required';
+                      });
+                      return;
+                    }
+                    if (dob == null) {
+                      setDialogState(() {
+                        errorText = 'Date of birth is required';
+                      });
+                      return;
+                    }
+                    if (ageFromDob(dob!) < 18) {
+                      setDialogState(() {
+                        errorText = 'You must be at least 18 years old';
+                      });
+                      return;
+                    }
 
-                          final targetId = idCtrl.text.trim();
-                          final payload = <String, dynamic>{
-                            'name': nameCtrl.text.trim(),
-                            'displayName': nameCtrl.text.trim(),
-                            'email': emailCtrl.text.trim(),
-                            'phone': phoneCtrl.text.trim(),
-                            'address': addressCtrl.text.trim(),
-                            'role': role,
-                            'blocked': blocked,
-                            'deliveryOnDuty': role == 'delivery' ? onDuty : false,
-                            'updatedAt': FieldValue.serverTimestamp(),
-                            if (userId == null)
-                              'createdAt': FieldValue.serverTimestamp(),
-                          };
+                    setDialogState(() {
+                      saving = true;
+                      errorText = null;
+                    });
 
-                          setDialogState(() {
-                            saving = true;
-                            errorText = null;
-                          });
+                    FirebaseApp? secondaryApp;
+                    FirebaseAuth? secondaryAuth;
+                    User? createdAuthUser;
+                    try {
+                      final users = FirebaseFirestore.instance
+                          .collection('users');
+                      late final DocumentReference<Map<String, dynamic>>
+                      docRef;
 
-                          try {
-                            await FirebaseFirestore.instance
-                                .collection('users')
-                                .doc(targetId)
-                                .set(payload, SetOptions(merge: true));
-                            if (!context.mounted) return;
-                            Navigator.pop(dialogContext);
-                            _showMsg(
-                              context,
-                              userId == null
-                                  ? 'User added successfully.'
-                                  : 'User updated successfully.',
-                            );
-                          } on FirebaseException catch (e) {
-                            setDialogState(() {
-                              saving = false;
-                              errorText = 'Save failed: ${e.message ?? e.code}';
-                            });
-                          } catch (e) {
-                            setDialogState(() {
-                              saving = false;
-                              errorText = 'Save failed: $e';
-                            });
-                          }
+                      if (isAddMode) {
+                        final appName =
+                            'admin_create_user_${DateTime.now().millisecondsSinceEpoch}';
+                        secondaryApp = await Firebase.initializeApp(
+                          name: appName,
+                          options: Firebase.app().options,
+                        );
+                        secondaryAuth = FirebaseAuth.instanceFor(
+                          app: secondaryApp,
+                        );
+                        final cred = await secondaryAuth
+                            .createUserWithEmailAndPassword(
+                          email:
+                          emailCtrl.text.trim().toLowerCase(),
+                          password: passwordCtrl.text,
+                        );
+                        createdAuthUser = cred.user;
+                        docRef = users.doc(cred.user!.uid);
+                      } else {
+                        docRef = users.doc(userId);
+                      }
+
+                      final payload = <String, dynamic>{
+                        'uid': docRef.id,
+                        'userId': docRef.id,
+                        'name': nameCtrl.text.trim(),
+                        'fullName': nameCtrl.text.trim(),
+                        'displayName': nameCtrl.text.trim(),
+                        'email': emailCtrl.text.trim().toLowerCase(),
+                        'phone': phoneE164.trim(),
+                        'address': addressCtrl.text.trim(),
+                        'gender': gender,
+                        'dob': Timestamp.fromDate(dob!),
+                        'role': role,
+                        'blocked': blocked,
+                        'deliveryOnDuty':
+                        role == 'delivery' ? onDuty : false,
+                        'updatedAt': FieldValue.serverTimestamp(),
+                        if (isAddMode)
+                          'createdAt': FieldValue.serverTimestamp(),
+                      };
+
+                      await docRef.set(
+                        payload,
+                        SetOptions(merge: true),
+                      );
+
+                      final db = FirebaseFirestore.instance;
+                      final adminRef = db
+                          .collection('admins')
+                          .doc(docRef.id);
+                      final superRef = db
+                          .collection('super_admins')
+                          .doc(docRef.id);
+                      final deliveryRef = db
+                          .collection('delivery_staff')
+                          .doc(docRef.id);
+
+                      if (role == 'super_admin') {
+                        await superRef.set({
+                          'email': emailCtrl.text.trim().toLowerCase(),
+                          'name': nameCtrl.text.trim(),
+                          'updatedAt': FieldValue.serverTimestamp(),
+                        }, SetOptions(merge: true));
+                        try {
+                          await adminRef.delete();
+                        } catch (_) {}
+                        try {
+                          await deliveryRef.delete();
+                        } catch (_) {}
+                      } else if (role == 'admin') {
+                        await adminRef.set({
+                          'email': emailCtrl.text.trim().toLowerCase(),
+                          'name': nameCtrl.text.trim(),
+                          'updatedAt': FieldValue.serverTimestamp(),
+                        }, SetOptions(merge: true));
+                        try {
+                          await superRef.delete();
+                        } catch (_) {}
+                        try {
+                          await deliveryRef.delete();
+                        } catch (_) {}
+                      } else if (role == 'delivery') {
+                        await deliveryRef.set({
+                          'email': emailCtrl.text.trim().toLowerCase(),
+                          'name': nameCtrl.text.trim(),
+                          'enabled': true,
+                          'deliveryOnDuty': onDuty,
+                          'updatedAt': FieldValue.serverTimestamp(),
+                        }, SetOptions(merge: true));
+                        try {
+                          await superRef.delete();
+                        } catch (_) {}
+                        try {
+                          await adminRef.delete();
+                        } catch (_) {}
+                      } else {
+                        try {
+                          await superRef.delete();
+                        } catch (_) {}
+                        try {
+                          await adminRef.delete();
+                        } catch (_) {}
+                        try {
+                          await deliveryRef.delete();
+                        } catch (_) {}
+                      }
+
+                      if (isAddMode) {
+                        await secondaryAuth?.signOut();
+                        await secondaryApp?.delete();
+                      }
+                      if (!context.mounted) return;
+                      Navigator.pop(dialogContext);
+                      _showMsg(
+                        context,
+                        userId == null
+                            ? 'User added successfully.'
+                            : 'User updated successfully.',
+                      );
+                    } on FirebaseAuthException catch (e) {
+                      if (isAddMode) {
+                        try {
+                          await secondaryAuth?.signOut();
+                        } catch (_) {}
+                        try {
+                          await secondaryApp?.delete();
+                        } catch (_) {}
+                      }
+                      String msg = 'Registration failed.';
+                      if (e.code == 'email-already-in-use') {
+                        msg = 'This email is already registered.';
+                      } else if (e.code == 'invalid-email') {
+                        msg = 'Invalid email format.';
+                      } else if (e.code == 'weak-password') {
+                        msg = 'Password too weak.';
+                      } else if (e.message != null &&
+                          e.message!.trim().isNotEmpty) {
+                        msg = e.message!;
+                      }
+                      setDialogState(() {
+                        saving = false;
+                        errorText = msg;
+                      });
+                    } on FirebaseException catch (e) {
+                      if (isAddMode && e.code == 'permission-denied') {
+                        try {
+                          await createdAuthUser?.delete();
+                        } catch (_) {}
+                      }
+                      if (isAddMode) {
+                        try {
+                          await secondaryAuth?.signOut();
+                        } catch (_) {}
+                        try {
+                          await secondaryApp?.delete();
+                        } catch (_) {}
+                      }
+                      setDialogState(() {
+                        saving = false;
+                        if (e.code == 'permission-denied') {
+                          errorText =
+                          'Save blocked by Firestore rules. '
+                              'Your admin account is missing write permission for users/{uid}.';
+                        } else {
+                          errorText =
+                          'Save failed: ${e.message ?? e.code}';
                         }
+                      });
+                    } catch (e) {
+                      if (isAddMode) {
+                        try {
+                          await secondaryAuth?.signOut();
+                        } catch (_) {}
+                        try {
+                          await secondaryApp?.delete();
+                        } catch (_) {}
+                      }
+                      setDialogState(() {
+                        saving = false;
+                        errorText = 'Save failed: $e';
+                      });
+                    }
+                  }
                       : null,
                   child: Text(userId == null ? 'Add' : 'Save'),
                 ),
@@ -353,10 +858,10 @@ class UsersAdminTab extends StatelessWidget {
   Widget build(BuildContext context) {
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream:
-          FirebaseFirestore.instance
-              .collection('users')
-              .orderBy('createdAt', descending: true)
-              .snapshots(),
+      FirebaseFirestore.instance
+          .collection('users')
+          .orderBy('createdAt', descending: true)
+          .snapshots(),
       builder: (context, snap) {
         if (snap.hasError) return _streamError(snap.error);
         if (!snap.hasData) {
@@ -386,133 +891,138 @@ class UsersAdminTab extends StatelessWidget {
               const SizedBox(height: 10),
               Expanded(
                 child:
-                    docs.isEmpty
-                        ? const Center(
-                          child: Text(
-                            'No users yet',
-                            style: TextStyle(fontWeight: FontWeight.w800),
-                          ),
-                        )
-                        : ListView.separated(
-                          itemCount: docs.length,
-                          separatorBuilder:
-                              (_, __) => const SizedBox(height: 10),
-                          itemBuilder: (_, i) {
-                            final d = docs[i];
-                            final data = d.data();
-                            final role =
-                                (data['role'] ?? 'user').toString().trim();
-                            final blocked = (data['blocked'] ?? false) == true;
-                            final onDuty =
-                                (data['deliveryOnDuty'] ?? true) == true;
+                docs.isEmpty
+                    ? const Center(
+                  child: Text(
+                    'No users yet',
+                    style: TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                )
+                    : ListView.separated(
+                  itemCount: docs.length,
+                  separatorBuilder:
+                      (_, __) => const SizedBox(height: 10),
+                  itemBuilder: (_, i) {
+                    final d = docs[i];
+                    final data = d.data();
+                    final role =
+                    (data['role'] ?? 'user').toString().trim();
+                    final blocked = (data['blocked'] ?? false) == true;
+                    final onDuty =
+                        (data['deliveryOnDuty'] ?? true) == true;
 
-                            return Container(
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFF7FAFF),
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(
-                                  color: const Color(0xFFE6E6E6),
-                                ),
-                              ),
-                              child: ListTile(
-                                contentPadding: const EdgeInsets.symmetric(
-                                  horizontal: 14,
-                                  vertical: 8,
-                                ),
-                                leading: CircleAvatar(
-                                  backgroundColor:
-                                      blocked
-                                          ? const Color(0xFFFFEBEE)
-                                          : const Color(0xFFE3F2FD),
-                                  foregroundColor:
-                                      blocked
-                                          ? const Color(0xFFD32F2F)
-                                          : const Color(0xFF1565C0),
-                                  child: Icon(
-                                    blocked
-                                        ? Icons.block_outlined
-                                        : Icons.person_outline,
-                                  ),
-                                ),
-                                title: Text(
-                                  _nameOf(data, d.id),
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w900,
-                                  ),
-                                ),
-                                subtitle: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    if (_emailOf(data).isNotEmpty)
-                                      Text(_emailOf(data)),
-                                    const SizedBox(height: 4),
-                                    Wrap(
-                                      spacing: 8,
-                                      runSpacing: 6,
-                                      children: [
-                                        _chip('Role: $role'),
-                                        if (role == 'delivery')
-                                          _chip(
-                                            onDuty ? 'On Duty' : 'Off Duty',
-                                          ),
-                                        _chip(blocked ? 'Blocked' : 'Active'),
-                                      ],
-                                    ),
-                                  ],
-                                ),
-                                trailing: PopupMenuButton<String>(
-                                  onSelected: (value) async {
-                                    if (value == 'edit') {
-                                      await _addOrEditUser(
-                                        context,
-                                        userId: d.id,
-                                        data: data,
-                                      );
-                                    } else if (value == 'user' ||
-                                        value == 'admin' ||
-                                        value == 'delivery') {
-                                      await _setRole(
-                                        context,
-                                        d.id,
-                                        data,
-                                        value,
-                                      );
-                                    } else if (value == 'block') {
-                                      await _toggleBlocked(context, d.id, data);
-                                    }
-                                  },
-                                  itemBuilder:
-                                      (_) => [
-                                        const PopupMenuItem(
-                                          value: 'edit',
-                                          child: Text('Edit User'),
-                                        ),
-                                        const PopupMenuItem(
-                                          value: 'user',
-                                          child: Text('Set as User'),
-                                        ),
-                                        const PopupMenuItem(
-                                          value: 'admin',
-                                          child: Text('Set as Admin'),
-                                        ),
-                                        const PopupMenuItem(
-                                          value: 'delivery',
-                                          child: Text('Set as Delivery'),
-                                        ),
-                                        PopupMenuItem(
-                                          value: 'block',
-                                          child: Text(
-                                            blocked
-                                                ? 'Unblock User'
-                                                : 'Block User',
-                                          ),
-                                        ),
-                                      ],
-                                ),
-                              ),
-                            );
-                          },
+                    return Container(
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF7FAFF),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: const Color(0xFFE6E6E6),
                         ),
+                      ),
+                      child: ListTile(
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 8,
+                        ),
+                        leading: CircleAvatar(
+                          backgroundColor:
+                          blocked
+                              ? const Color(0xFFFFEBEE)
+                              : const Color(0xFFE3F2FD),
+                          foregroundColor:
+                          blocked
+                              ? const Color(0xFFD32F2F)
+                              : const Color(0xFF1565C0),
+                          child: Icon(
+                            blocked
+                                ? Icons.block_outlined
+                                : Icons.person_outline,
+                          ),
+                        ),
+                        title: Text(
+                          _nameOf(data, d.id),
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        subtitle: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            if (_emailOf(data).isNotEmpty)
+                              Text(_emailOf(data)),
+                            const SizedBox(height: 4),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 6,
+                              children: [
+                                _chip('Role: $role'),
+                                if (role == 'delivery')
+                                  _chip(
+                                    onDuty ? 'On Duty' : 'Off Duty',
+                                  ),
+                                _chip(blocked ? 'Blocked' : 'Active'),
+                              ],
+                            ),
+                          ],
+                        ),
+                        trailing: PopupMenuButton<String>(
+                          onSelected: (value) async {
+                            if (value == 'edit') {
+                              await _addOrEditUser(
+                                context,
+                                userId: d.id,
+                                data: data,
+                              );
+                            } else if (value == 'user' ||
+                                value == 'admin' ||
+                                value == 'super_admin' ||
+                                value == 'delivery') {
+                              await _setRole(
+                                context,
+                                d.id,
+                                data,
+                                value,
+                              );
+                            } else if (value == 'block') {
+                              await _toggleBlocked(context, d.id, data);
+                            }
+                          },
+                          itemBuilder:
+                              (_) => [
+                            const PopupMenuItem(
+                              value: 'edit',
+                              child: Text('Edit User'),
+                            ),
+                            const PopupMenuItem(
+                              value: 'user',
+                              child: Text('Set as User'),
+                            ),
+                            const PopupMenuItem(
+                              value: 'admin',
+                              child: Text('Set as Store Admin'),
+                            ),
+                            const PopupMenuItem(
+                              value: 'super_admin',
+                              child: Text('Set as Super Admin'),
+                            ),
+                            const PopupMenuItem(
+                              value: 'delivery',
+                              child: Text('Set as Delivery'),
+                            ),
+                            PopupMenuItem(
+                              value: 'block',
+                              child: Text(
+                                blocked
+                                    ? 'Unblock User'
+                                    : 'Block User',
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
               ),
             ],
           ),
@@ -524,7 +1034,12 @@ class UsersAdminTab extends StatelessWidget {
 
 class OrdersAdminTab extends StatefulWidget {
   final FirestoreService svc;
-  const OrdersAdminTab({super.key, required this.svc});
+  final bool canAssignDelivery;
+  const OrdersAdminTab({
+    super.key,
+    required this.svc,
+    this.canAssignDelivery = true,
+  });
 
   @override
   State<OrdersAdminTab> createState() => _OrdersAdminTabState();
@@ -534,11 +1049,11 @@ class _OrdersAdminTabState extends State<OrdersAdminTab> {
   String _statusFilter = 'all';
 
   Future<bool> _confirm(
-    BuildContext context,
-    String title,
-    String message, {
-    String confirmText = 'Yes',
-  }) async {
+      BuildContext context,
+      String title,
+      String message, {
+        String confirmText = 'Yes',
+      }) async {
     return showConfirmDialog(
       context,
       title: title,
@@ -578,10 +1093,10 @@ class _OrdersAdminTabState extends State<OrdersAdminTab> {
   }
 
   Future<void> _updateStatus(
-    BuildContext context,
-    DocumentReference<Map<String, dynamic>> ref,
-    String newStatus,
-  ) async {
+      BuildContext context,
+      DocumentReference<Map<String, dynamic>> ref,
+      String newStatus,
+      ) async {
     final ok = await _confirm(
       context,
       'Update Order Status',
@@ -591,10 +1106,10 @@ class _OrdersAdminTabState extends State<OrdersAdminTab> {
     if (!ok) return;
 
     try {
-      await ref.set({
-        'status': newStatus,
-        'updatedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+      await widget.svc.updateOrderStatusByPath(
+        orderPath: ref.path,
+        status: newStatus,
+      );
 
       if (context.mounted) {
         _showMsg(context, 'Order status updated.');
@@ -609,18 +1124,18 @@ class _OrdersAdminTabState extends State<OrdersAdminTab> {
   }
 
   Future<void> _assignDelivery(
-    BuildContext context,
-    DocumentReference<Map<String, dynamic>> orderRef,
-    String? currentDeliveryId,
-  ) async {
+      BuildContext context,
+      DocumentReference<Map<String, dynamic>> orderRef,
+      String? currentDeliveryId,
+      ) async {
     final deliverySnap = await _deliveryUsersStream().first;
     if (!context.mounted) return;
 
     final docs = deliverySnap.docs;
     final available =
-        docs
-            .where((e) => (e.data()['deliveryOnDuty'] ?? true) == true)
-            .toList();
+    docs
+        .where((e) => (e.data()['deliveryOnDuty'] ?? true) == true)
+        .toList();
 
     if (available.isEmpty) {
       _showMsg(
@@ -657,20 +1172,20 @@ class _OrdersAdminTabState extends State<OrdersAdminTab> {
                         labelText: 'Delivery Staff',
                       ),
                       items:
-                          available
-                              .map(
-                                (e) => DropdownMenuItem<String>(
-                                  value: e.id,
-                                  child: Text(
-                                    ((e.data()['name'] ??
-                                            e.data()['displayName'] ??
-                                            e.data()['email'] ??
-                                            e.id))
-                                        .toString(),
-                                  ),
-                                ),
-                              )
-                              .toList(),
+                      available
+                          .map(
+                            (e) => DropdownMenuItem<String>(
+                          value: e.id,
+                          child: Text(
+                            ((e.data()['name'] ??
+                                e.data()['displayName'] ??
+                                e.data()['email'] ??
+                                e.id))
+                                .toString(),
+                          ),
+                        ),
+                      )
+                          .toList(),
                       onChanged: (v) {
                         setDialogState(() {
                           selectedId = v;
@@ -708,16 +1223,16 @@ class _OrdersAdminTabState extends State<OrdersAdminTab> {
                     }
 
                     final picked = available.firstWhere(
-                      (e) => e.id == selectedId,
+                          (e) => e.id == selectedId,
                     );
                     final staffName =
-                        (picked.data()['name'] ??
-                                picked.data()['displayName'] ??
-                                picked.data()['email'] ??
-                                picked.id)
-                            .toString();
+                    (picked.data()['name'] ??
+                        picked.data()['displayName'] ??
+                        picked.data()['email'] ??
+                        picked.id)
+                        .toString();
                     final staffEmail =
-                        (picked.data()['email'] ?? '').toString().trim();
+                    (picked.data()['email'] ?? '').toString().trim();
 
                     try {
                       // Use service flow so writes go to allowed path:
@@ -809,14 +1324,14 @@ class _OrdersAdminTabState extends State<OrdersAdminTab> {
               labelText: 'Filter by Status',
             ),
             items:
-                statuses
-                    .map(
-                      (e) => DropdownMenuItem<String>(
-                        value: e,
-                        child: Text(e.toUpperCase()),
-                      ),
-                    )
-                    .toList(),
+            statuses
+                .map(
+                  (e) => DropdownMenuItem<String>(
+                value: e,
+                child: Text(e.toUpperCase()),
+              ),
+            )
+                .toList(),
             onChanged: (v) {
               if (v == null) return;
               setState(() => _statusFilter = v);
@@ -845,9 +1360,9 @@ class _OrdersAdminTabState extends State<OrdersAdminTab> {
                       docs
                           .where(
                             (e) =>
-                                (e.data()['status'] ?? '').toString() ==
-                                _statusFilter,
-                          )
+                        (e.data()['status'] ?? '').toString() ==
+                            _statusFilter,
+                      )
                           .toList();
                 }
 
@@ -868,15 +1383,25 @@ class _OrdersAdminTabState extends State<OrdersAdminTab> {
                     final o = d.data();
 
                     final status = (o['status'] ?? 'pending').toString();
+                    final statusLower = status.trim().toLowerCase();
+                    final deliveryStatusLower =
+                    (o['deliveryStatus'] ?? '')
+                        .toString()
+                        .trim()
+                        .toLowerCase();
+                    final isFinalOrder =
+                        statusLower == 'completed' ||
+                            statusLower == 'delivered' ||
+                            deliveryStatusLower == 'delivered';
                     final total = o['total'] ?? o['totalAmount'] ?? 0;
                     final customer =
-                        (o['userName'] ??
-                                o['customerName'] ??
-                                o['email'] ??
-                                'Unknown Customer')
-                            .toString();
+                    (o['userName'] ??
+                        o['customerName'] ??
+                        o['email'] ??
+                        'Unknown Customer')
+                        .toString();
                     final deliveryName =
-                        (o['deliveryName'] ?? '').toString().trim();
+                    (o['deliveryName'] ?? '').toString().trim();
                     final ts = o['createdAt'];
 
                     String dateText = '-';
@@ -908,7 +1433,7 @@ class _OrdersAdminTabState extends State<OrdersAdminTab> {
                                 Expanded(
                                   child: Column(
                                     crossAxisAlignment:
-                                        CrossAxisAlignment.start,
+                                    CrossAxisAlignment.start,
                                     children: [
                                       Text(
                                         'Order ${d.id}',
@@ -937,52 +1462,61 @@ class _OrdersAdminTabState extends State<OrdersAdminTab> {
                               children: [
                                 OutlinedButton(
                                   onPressed:
-                                      () => _updateStatus(
-                                        context,
-                                        d.reference,
-                                        'processing',
-                                      ),
+                                  isFinalOrder
+                                      ? null
+                                      : () => _updateStatus(
+                                    context,
+                                    d.reference,
+                                    'processing',
+                                  ),
                                   child: const Text('Processing'),
                                 ),
                                 OutlinedButton(
                                   onPressed:
-                                      () => _updateStatus(
-                                        context,
-                                        d.reference,
-                                        'shipping',
-                                      ),
+                                  isFinalOrder
+                                      ? null
+                                      : () => _updateStatus(
+                                    context,
+                                    d.reference,
+                                    'shipping',
+                                  ),
                                   child: const Text('Shipping'),
                                 ),
                                 OutlinedButton(
                                   onPressed:
-                                      () => _updateStatus(
-                                        context,
-                                        d.reference,
-                                        'delivered',
-                                      ),
+                                  isFinalOrder
+                                      ? null
+                                      : () => _updateStatus(
+                                    context,
+                                    d.reference,
+                                    'delivered',
+                                  ),
                                   child: const Text('Delivered'),
                                 ),
                                 OutlinedButton(
                                   onPressed:
-                                      () => _updateStatus(
-                                        context,
-                                        d.reference,
-                                        'cancelled',
-                                      ),
+                                  isFinalOrder
+                                      ? null
+                                      : () => _updateStatus(
+                                    context,
+                                    d.reference,
+                                    'cancelled',
+                                  ),
                                   child: const Text('Cancelled'),
                                 ),
-                                ElevatedButton.icon(
-                                  onPressed:
-                                      () => _assignDelivery(
-                                        context,
-                                        d.reference,
-                                        (o['deliveryId'] ?? '').toString(),
-                                      ),
-                                  icon: const Icon(
-                                    Icons.local_shipping_outlined,
+                                if (widget.canAssignDelivery)
+                                  ElevatedButton.icon(
+                                    onPressed:
+                                        () => _assignDelivery(
+                                      context,
+                                      d.reference,
+                                      (o['deliveryId'] ?? '').toString(),
+                                    ),
+                                    icon: const Icon(
+                                      Icons.local_shipping_outlined,
+                                    ),
+                                    label: const Text('Assign Delivery'),
                                   ),
-                                  label: const Text('Assign Delivery'),
-                                ),
                               ],
                             ),
                           ],
@@ -1000,16 +1534,24 @@ class _OrdersAdminTabState extends State<OrdersAdminTab> {
   }
 }
 
-class ReviewsAdminTab extends StatelessWidget {
+class ReviewsAdminTab extends StatefulWidget {
   final FirestoreService svc;
-  const ReviewsAdminTab({super.key, required this.svc});
+  final String? fixedStoreId;
+  const ReviewsAdminTab({super.key, required this.svc, this.fixedStoreId});
+
+  @override
+  State<ReviewsAdminTab> createState() => _ReviewsAdminTabState();
+}
+
+class _ReviewsAdminTabState extends State<ReviewsAdminTab> {
+  String _categoryFilter = 'all';
 
   Future<bool> _confirm(
-    BuildContext context,
-    String title,
-    String message, {
-    String confirmText = 'Yes',
-  }) async {
+      BuildContext context,
+      String title,
+      String message, {
+        String confirmText = 'Yes',
+      }) async {
     return showConfirmDialog(
       context,
       title: title,
@@ -1038,10 +1580,10 @@ class ReviewsAdminTab extends StatelessWidget {
   }
 
   Future<void> _deleteReview(
-    BuildContext context,
-    DocumentReference<Map<String, dynamic>> ref,
-    String title,
-  ) async {
+      BuildContext context,
+      DocumentReference<Map<String, dynamic>> ref,
+      String title,
+      ) async {
     final ok = await _confirm(
       context,
       'Delete Review',
@@ -1064,114 +1606,215 @@ class ReviewsAdminTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final reviewsStream =
+    FirebaseFirestore.instance
+        .collection('product_reviews')
+        .orderBy('createdAt', descending: true)
+        .snapshots();
+    final productsStream =
+    FirebaseFirestore.instance.collection('products').snapshots();
+
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream:
-          FirebaseFirestore.instance
-              .collection('product_reviews')
-              .orderBy('createdAt', descending: true)
-              .snapshots(),
-      builder: (context, snap) {
-        if (snap.hasError) return _streamError(snap.error);
-        if (!snap.hasData) {
+      stream: reviewsStream,
+      builder: (context, reviewSnap) {
+        if (reviewSnap.hasError) return _streamError(reviewSnap.error);
+        if (!reviewSnap.hasData) {
           return const Center(child: CircularProgressIndicator());
         }
 
-        final docs = snap.data!.docs;
+        return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+          stream: productsStream,
+          builder: (context, productSnap) {
+            if (!productSnap.hasData) {
+              return const Center(child: CircularProgressIndicator());
+            }
 
-        return Padding(
-          padding: const EdgeInsets.all(14),
-          child: Column(
-            children: [
-              _SectionCountHeader(
-                title: 'Reviews',
-                subtitle: 'Moderate customer reviews and feedback.',
-                icon: Icons.rate_review_outlined,
-                countText: '${docs.length}',
-              ),
-              Expanded(
-                child:
+            final productCategoryById = <String, String>{};
+            final productStoreIdById = <String, String>{};
+            for (final p in productSnap.data!.docs) {
+              final pdata = p.data();
+              final raw = (pdata['category'] ?? '').toString().trim();
+              productCategoryById[p.id] = raw.isEmpty ? 'Uncategorized' : raw;
+              productStoreIdById[p.id] =
+                  (pdata['storeId'] ?? '').toString().trim();
+            }
+
+            String categoryOfReview(Map<String, dynamic> review) {
+              final direct =
+              (review['category'] ?? review['productCategory'] ?? '')
+                  .toString()
+                  .trim();
+              if (direct.isNotEmpty) return direct;
+
+              final productId = (review['productId'] ?? '').toString().trim();
+              if (productId.isNotEmpty) {
+                final mapped = productCategoryById[productId];
+                if (mapped != null && mapped.trim().isNotEmpty) {
+                  return mapped;
+                }
+              }
+              return 'Uncategorized';
+            }
+
+            final cleanStoreId = (widget.fixedStoreId ?? '').trim();
+            final allDocs =
+            reviewSnap.data!.docs.where((d) {
+              if (cleanStoreId.isEmpty) return true;
+              final review = d.data();
+              final reviewStoreId =
+              (review['storeId'] ?? '').toString().trim();
+              if (reviewStoreId == cleanStoreId) return true;
+              final productId =
+              (review['productId'] ?? '').toString().trim();
+              final productStoreId = productStoreIdById[productId] ?? '';
+              return productStoreId == cleanStoreId;
+            }).toList();
+            final categorySet = <String>{'all'};
+            for (final d in allDocs) {
+              categorySet.add(categoryOfReview(d.data()));
+            }
+            if (_categoryFilter.trim().isNotEmpty) {
+              categorySet.add(_categoryFilter);
+            }
+            final categories =
+            categorySet.toList()..sort((a, b) {
+              if (a == 'all') return -1;
+              if (b == 'all') return 1;
+              return a.toLowerCase().compareTo(b.toLowerCase());
+            });
+
+            final docs =
+            _categoryFilter == 'all'
+                ? allDocs
+                : allDocs
+                .where(
+                  (d) => categoryOfReview(d.data()) == _categoryFilter,
+            )
+                .toList();
+
+            return Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                children: [
+                  _SectionCountHeader(
+                    title: 'Reviews',
+                    subtitle: 'Moderate customer reviews and feedback.',
+                    icon: Icons.rate_review_outlined,
+                    countText: '${docs.length}',
+                  ),
+                  DropdownButtonFormField<String>(
+                    value: _categoryFilter,
+                    decoration: const InputDecoration(
+                      border: OutlineInputBorder(),
+                      labelText: 'Filter by Category',
+                    ),
+                    items:
+                    categories
+                        .map(
+                          (c) => DropdownMenuItem<String>(
+                        value: c,
+                        child: Text(c == 'all' ? 'All Categories' : c),
+                      ),
+                    )
+                        .toList(),
+                    onChanged: (v) {
+                      if (v == null) return;
+                      setState(() => _categoryFilter = v);
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  Expanded(
+                    child:
                     docs.isEmpty
                         ? const Center(
-                          child: Text(
-                            'No reviews yet',
-                            style: TextStyle(fontWeight: FontWeight.w800),
-                          ),
-                        )
+                      child: Text(
+                        'No reviews found',
+                        style: TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                    )
                         : ListView.separated(
-                          itemCount: docs.length,
-                          separatorBuilder:
-                              (_, __) => const SizedBox(height: 10),
-                          itemBuilder: (_, i) {
-                            final d = docs[i];
-                            final r = d.data();
+                      itemCount: docs.length,
+                      separatorBuilder:
+                          (_, __) => const SizedBox(height: 10),
+                      itemBuilder: (_, i) {
+                        final d = docs[i];
+                        final r = d.data();
 
-                            final product =
-                                (r['productName'] ?? r['title'] ?? 'Product')
-                                    .toString();
-                            final user =
-                                (r['userName'] ??
-                                        r['name'] ??
-                                        r['email'] ??
-                                        'Anonymous')
-                                    .toString();
-                            final rating =
-                                ((r['rating'] ?? 0) as num).toDouble();
-                            final comment = (r['comment'] ?? '').toString();
+                        final product =
+                        (r['productName'] ??
+                            r['title'] ??
+                            'Product')
+                            .toString();
+                        final user =
+                        (r['userName'] ??
+                            r['name'] ??
+                            r['email'] ??
+                            'Anonymous')
+                            .toString();
+                        final rating =
+                        ((r['rating'] ?? 0) as num).toDouble();
+                        final comment = (r['comment'] ?? '').toString();
+                        final category = categoryOfReview(r);
 
-                            return Container(
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFF7FAFF),
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(
-                                  color: const Color(0xFFE6E6E6),
-                                ),
+                        return Container(
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF7FAFF),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: const Color(0xFFE6E6E6),
+                            ),
+                          ),
+                          child: ListTile(
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 8,
+                            ),
+                            leading: const CircleAvatar(
+                              backgroundColor: Color(0xFFE3F2FD),
+                              foregroundColor: Color(0xFF1565C0),
+                              child: Icon(Icons.rate_review_outlined),
+                            ),
+                            title: Text(
+                              product,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w900,
                               ),
-                              child: ListTile(
-                                contentPadding: const EdgeInsets.symmetric(
-                                  horizontal: 14,
-                                  vertical: 8,
+                            ),
+                            subtitle: Column(
+                              crossAxisAlignment:
+                              CrossAxisAlignment.start,
+                              children: [
+                                Text('By: $user'),
+                                const SizedBox(height: 4),
+                                Text('Category: $category'),
+                                const SizedBox(height: 4),
+                                Text(
+                                  'Rating: ${rating.toStringAsFixed(1)} / 5',
                                 ),
-                                leading: const CircleAvatar(
-                                  backgroundColor: Color(0xFFE3F2FD),
-                                  foregroundColor: Color(0xFF1565C0),
-                                  child: Icon(Icons.rate_review_outlined),
-                                ),
-                                title: Text(
-                                  product,
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w900,
-                                  ),
-                                ),
-                                subtitle: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text('By: $user'),
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      'Rating: ${rating.toStringAsFixed(1)} / 5',
-                                    ),
-                                    if (comment.isNotEmpty) ...[
-                                      const SizedBox(height: 6),
-                                      Text(comment),
-                                    ],
-                                  ],
-                                ),
-                                trailing: IconButton(
-                                  icon: const Icon(Icons.delete_outline),
-                                  onPressed:
-                                      () => _deleteReview(
-                                        context,
-                                        d.reference,
-                                        product,
-                                      ),
-                                ),
+                                if (comment.isNotEmpty) ...[
+                                  const SizedBox(height: 6),
+                                  Text(comment),
+                                ],
+                              ],
+                            ),
+                            trailing: IconButton(
+                              icon: const Icon(Icons.delete_outline),
+                              onPressed:
+                                  () => _deleteReview(
+                                context,
+                                d.reference,
+                                product,
                               ),
-                            );
-                          },
-                        ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
               ),
-            ],
-          ),
+            );
+          },
         );
       },
     );
@@ -1180,14 +1823,21 @@ class ReviewsAdminTab extends StatelessWidget {
 
 class EventsAdminTab extends StatelessWidget {
   final FirestoreService svc;
-  const EventsAdminTab({super.key, required this.svc});
+  final String? fixedStoreId;
+  final String? fixedStoreName;
+  const EventsAdminTab({
+    super.key,
+    required this.svc,
+    this.fixedStoreId,
+    this.fixedStoreName,
+  });
 
   Future<bool> _confirm(
-    BuildContext context,
-    String title,
-    String message, {
-    String confirmText = 'Yes',
-  }) async {
+      BuildContext context,
+      String title,
+      String message, {
+        String confirmText = 'Yes',
+      }) async {
     return showConfirmDialog(
       context,
       title: title,
@@ -1228,13 +1878,13 @@ class EventsAdminTab extends StatelessWidget {
   }
 
   Future<void> _previewEvent(
-    BuildContext context,
-    String eventId,
-    Map<String, dynamic> data,
-  ) async {
+      BuildContext context,
+      String eventId,
+      Map<String, dynamic> data,
+      ) async {
     final title = (data['title'] ?? 'Untitled Event').toString();
     final description =
-        (data['description'] ?? data['message'] ?? '').toString().trim();
+    (data['description'] ?? data['message'] ?? '').toString().trim();
     final imageUrl = (data['imageUrl'] ?? '').toString().trim();
     final dateText = _eventDateText(data);
 
@@ -1254,23 +1904,23 @@ class EventsAdminTab extends StatelessWidget {
                     width: double.infinity,
                     height: 180,
                     child:
-                        _isHttpImageUrl(imageUrl)
-                            ? Image.network(
-                              imageUrl,
-                              fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) {
-                                return const ColoredBox(
-                                  color: Color(0xFFF1F3F4),
-                                  child: Center(
-                                    child: Text('Unable to load image'),
-                                  ),
-                                );
-                              },
-                            )
-                            : const ColoredBox(
-                              color: Color(0xFFF1F3F4),
-                              child: Center(child: Text('No image')),
-                            ),
+                    _isHttpImageUrl(imageUrl)
+                        ? Image.network(
+                      imageUrl,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) {
+                        return const ColoredBox(
+                          color: Color(0xFFF1F3F4),
+                          child: Center(
+                            child: Text('Unable to load image'),
+                          ),
+                        );
+                      },
+                    )
+                        : const ColoredBox(
+                      color: Color(0xFFF1F3F4),
+                      child: Center(child: Text('No image')),
+                    ),
                   ),
                 ),
                 const SizedBox(height: 10),
@@ -1305,10 +1955,10 @@ class EventsAdminTab extends StatelessWidget {
   }
 
   Future<void> _toggleEventActive(
-    BuildContext context,
-    String eventId,
-    bool currentValue,
-  ) async {
+      BuildContext context,
+      String eventId,
+      bool currentValue,
+      ) async {
     try {
       await FirebaseFirestore.instance.collection('events').doc(eventId).set({
         'active': !currentValue,
@@ -1330,10 +1980,10 @@ class EventsAdminTab extends StatelessWidget {
   }
 
   Future<void> _addOrEditEvent(
-    BuildContext context, {
-    String? eventId,
-    Map<String, dynamic>? data,
-  }) async {
+      BuildContext context, {
+        String? eventId,
+        Map<String, dynamic>? data,
+      }) async {
     final titleCtrl = TextEditingController(
       text: (data?['title'] ?? '').toString(),
     );
@@ -1348,9 +1998,9 @@ class EventsAdminTab extends StatelessWidget {
     final picker = ImagePicker();
 
     DateTime eventDate =
-        (data?['date'] is Timestamp)
-            ? (data!['date'] as Timestamp).toDate()
-            : DateTime.now().add(const Duration(days: 7));
+    (data?['date'] is Timestamp)
+        ? (data!['date'] as Timestamp).toDate()
+        : DateTime.now().add(const Duration(days: 7));
 
     Future<void> pickDate(StateSetter setDialogState) async {
       final picked = await showDatePicker(
@@ -1411,38 +2061,38 @@ class EventsAdminTab extends StatelessWidget {
                         width: double.infinity,
                         height: 220,
                         child:
-                            imageCtrl.text.trim().isEmpty
-                                ? Container(
-                                  color: const Color(0xFFF1F3F4),
-                                  alignment: Alignment.center,
-                                  child: const Text(
-                                    'No image selected',
-                                    style: TextStyle(
-                                      color: Colors.black54,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                )
-                                : Container(
-                                  color: const Color(0xFFF1F3F4),
-                                  child: Image.network(
-                                    imageCtrl.text.trim(),
-                                    fit: BoxFit.contain,
-                                    errorBuilder: (_, __, ___) {
-                                      return Container(
-                                        color: const Color(0xFFF1F3F4),
-                                        alignment: Alignment.center,
-                                        child: const Text(
-                                          'Unable to load image',
-                                          style: TextStyle(
-                                            color: Colors.black54,
-                                            fontWeight: FontWeight.w700,
-                                          ),
-                                        ),
-                                      );
-                                    },
+                        imageCtrl.text.trim().isEmpty
+                            ? Container(
+                          color: const Color(0xFFF1F3F4),
+                          alignment: Alignment.center,
+                          child: const Text(
+                            'No image selected',
+                            style: TextStyle(
+                              color: Colors.black54,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        )
+                            : Container(
+                          color: const Color(0xFFF1F3F4),
+                          child: Image.network(
+                            imageCtrl.text.trim(),
+                            fit: BoxFit.contain,
+                            errorBuilder: (_, __, ___) {
+                              return Container(
+                                color: const Color(0xFFF1F3F4),
+                                alignment: Alignment.center,
+                                child: const Text(
+                                  'Unable to load image',
+                                  style: TextStyle(
+                                    color: Colors.black54,
+                                    fontWeight: FontWeight.w700,
                                   ),
                                 ),
+                              );
+                            },
+                          ),
+                        ),
                       ),
                     ),
                     const SizedBox(height: 10),
@@ -1450,47 +2100,47 @@ class EventsAdminTab extends StatelessWidget {
                       width: double.infinity,
                       child: OutlinedButton.icon(
                         onPressed:
-                            uploadingImage
-                                ? null
-                                : () async {
-                                  try {
-                                    final file = await picker.pickImage(
-                                      source: ImageSource.gallery,
-                                      imageQuality: 85,
-                                      maxWidth: 1800,
-                                    );
-                                    if (file == null) return;
+                        uploadingImage
+                            ? null
+                            : () async {
+                          try {
+                            final file = await picker.pickImage(
+                              source: ImageSource.gallery,
+                              imageQuality: 85,
+                              maxWidth: 1800,
+                            );
+                            if (file == null) return;
 
-                                    setDialogState(() {
-                                      errorText = null;
-                                      uploadingImage = true;
-                                    });
+                            setDialogState(() {
+                              errorText = null;
+                              uploadingImage = true;
+                            });
 
-                                    final url = await svc.uploadImageXFile(
-                                      file: file,
-                                      folder: 'events',
-                                      fileNameHint: titleCtrl.text.trim(),
-                                    );
-                                    imageCtrl.text = url;
-                                    setDialogState(
-                                      () => uploadingImage = false,
-                                    );
-                                    if (context.mounted) {
-                                      _showMsg(context, 'Image uploaded.');
-                                    }
-                                  } on FirebaseException catch (e) {
-                                    setDialogState(() {
-                                      uploadingImage = false;
-                                      errorText =
-                                          'Upload failed: ${e.message ?? e.code}';
-                                    });
-                                  } catch (e) {
-                                    setDialogState(() {
-                                      uploadingImage = false;
-                                      errorText = 'Upload failed: $e';
-                                    });
-                                  }
-                                },
+                            final url = await svc.uploadImageXFile(
+                              file: file,
+                              folder: 'events',
+                              fileNameHint: titleCtrl.text.trim(),
+                            );
+                            imageCtrl.text = url;
+                            setDialogState(
+                                  () => uploadingImage = false,
+                            );
+                            if (context.mounted) {
+                              _showMsg(context, 'Image uploaded.');
+                            }
+                          } on FirebaseException catch (e) {
+                            setDialogState(() {
+                              uploadingImage = false;
+                              errorText =
+                              'Upload failed: ${e.message ?? e.code}';
+                            });
+                          } catch (e) {
+                            setDialogState(() {
+                              uploadingImage = false;
+                              errorText = 'Upload failed: $e';
+                            });
+                          }
+                        },
                         icon: const Icon(Icons.cloud_upload_outlined),
                         label: Text(
                           uploadingImage
@@ -1504,11 +2154,11 @@ class EventsAdminTab extends StatelessWidget {
                       alignment: Alignment.centerRight,
                       child: OutlinedButton.icon(
                         onPressed:
-                            uploadingImage
-                                ? null
-                                : () {
-                                  setDialogState(() => imageCtrl.clear());
-                                },
+                        uploadingImage
+                            ? null
+                            : () {
+                          setDialogState(() => imageCtrl.clear());
+                        },
                         icon: const Icon(Icons.delete_outline),
                         label: const Text('Remove Image'),
                       ),
@@ -1556,7 +2206,7 @@ class EventsAdminTab extends StatelessWidget {
                     if (uploadingImage) {
                       setDialogState(() {
                         errorText =
-                            'Please wait until image upload is complete.';
+                        'Please wait until image upload is complete.';
                       });
                       return;
                     }
@@ -1573,19 +2223,21 @@ class EventsAdminTab extends StatelessWidget {
 
                     try {
                       final ref =
-                          eventId == null
-                              ? FirebaseFirestore.instance
-                                  .collection('events')
-                                  .doc()
-                              : FirebaseFirestore.instance
-                                  .collection('events')
-                                  .doc(eventId);
+                      eventId == null
+                          ? FirebaseFirestore.instance
+                          .collection('events')
+                          .doc()
+                          : FirebaseFirestore.instance
+                          .collection('events')
+                          .doc(eventId);
 
                       await ref.set({
                         'title': title,
                         'description': desc,
                         'message': desc,
                         'imageUrl': imageUrl,
+                        'storeId': (fixedStoreId ?? '').trim(),
+                        'storeName': (fixedStoreName ?? '').trim(),
                         'date': Timestamp.fromDate(eventDate),
                         'active': active,
                         'updatedAt': FieldValue.serverTimestamp(),
@@ -1619,10 +2271,10 @@ class EventsAdminTab extends StatelessWidget {
   }
 
   Future<void> _deleteEvent(
-    BuildContext context,
-    String eventId,
-    String title,
-  ) async {
+      BuildContext context,
+      String eventId,
+      String title,
+      ) async {
     final ok = await _confirm(
       context,
       'Delete Event',
@@ -1648,19 +2300,34 @@ class EventsAdminTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final cleanStoreId = (fixedStoreId ?? '').trim();
+    final eventsQuery =
+    cleanStoreId.isEmpty
+        ? FirebaseFirestore.instance.collection('events')
+        : FirebaseFirestore.instance
+        .collection('events')
+        .where('storeId', isEqualTo: cleanStoreId);
+
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream:
-          FirebaseFirestore.instance
-              .collection('events')
-              .orderBy('date', descending: true)
-              .snapshots(),
+      stream: eventsQuery.snapshots(),
       builder: (context, snap) {
         if (snap.hasError) return _streamError(snap.error);
         if (!snap.hasData) {
           return const Center(child: CircularProgressIndicator());
         }
 
-        final docs = snap.data!.docs;
+        final docs =
+        snap.data!.docs.toList()..sort((a, b) {
+          DateTime asDate(Object? v) {
+            if (v is Timestamp) return v.toDate();
+            if (v is DateTime) return v;
+            return DateTime.fromMillisecondsSinceEpoch(0);
+          }
+
+          final ad = asDate(a.data()['date']);
+          final bd = asDate(b.data()['date']);
+          return bd.compareTo(ad);
+        });
 
         return Padding(
           padding: const EdgeInsets.all(14),
@@ -1683,215 +2350,230 @@ class EventsAdminTab extends StatelessWidget {
               const SizedBox(height: 12),
               Expanded(
                 child:
-                    docs.isEmpty
-                        ? const Center(
-                          child: Text(
-                            'No events yet',
-                            style: TextStyle(fontWeight: FontWeight.w800),
-                          ),
-                        )
-                        : ListView.separated(
-                          itemCount: docs.length,
-                          separatorBuilder:
-                              (_, __) => const SizedBox(height: 10),
-                          itemBuilder: (_, i) {
-                            final d = docs[i];
-                            final e = d.data();
-                            final title =
-                                (e['title'] ?? 'Untitled Event').toString();
-                            final active = (e['active'] ?? false) == true;
-                            final date = _eventDateText(e);
-                            final imageUrl =
-                                (e['imageUrl'] ?? '').toString().trim();
+                docs.isEmpty
+                    ? const Center(
+                  child: Text(
+                    'No events yet',
+                    style: TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                )
+                    : ListView.separated(
+                  itemCount: docs.length,
+                  separatorBuilder:
+                      (_, __) => const SizedBox(height: 10),
+                  itemBuilder: (_, i) {
+                    final d = docs[i];
+                    final e = d.data();
+                    final title =
+                    (e['title'] ?? 'Untitled Event').toString();
+                    final active = (e['active'] ?? false) == true;
+                    final date = _eventDateText(e);
+                    final imageUrl =
+                    (e['imageUrl'] ?? '').toString().trim();
 
-                            return Container(
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFF7FAFF),
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(
-                                  color: const Color(0xFFE6E6E6),
-                                ),
-                              ),
-                              child: InkWell(
-                                borderRadius: BorderRadius.circular(12),
-                                onTap: () => _previewEvent(context, d.id, e),
-                                child: Padding(
-                                  padding: const EdgeInsets.all(12),
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Row(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          ClipRRect(
-                                            borderRadius:
-                                                BorderRadius.circular(8),
-                                            child: SizedBox(
-                                              width: 52,
-                                              height: 52,
-                                              child:
-                                                  _isHttpImageUrl(imageUrl)
-                                                      ? Image.network(
-                                                        imageUrl,
-                                                        fit: BoxFit.cover,
-                                                        errorBuilder:
-                                                            (_, __, ___) {
-                                                          return const ColoredBox(
-                                                            color: Color(
-                                                              0xFFE3F2FD,
-                                                            ),
-                                                            child: Icon(
-                                                              Icons
-                                                                  .broken_image_outlined,
-                                                              color: Color(
-                                                                0xFF1565C0,
-                                                              ),
-                                                            ),
-                                                          );
-                                                        },
-                                                      )
-                                                      : const ColoredBox(
-                                                        color: Color(
-                                                          0xFFE3F2FD,
-                                                        ),
-                                                        child: Icon(
-                                                          Icons
-                                                              .event_note_outlined,
-                                                          color: Color(
-                                                            0xFF1565C0,
-                                                          ),
-                                                        ),
-                                                      ),
-                                            ),
-                                          ),
-                                          const SizedBox(width: 10),
-                                          Expanded(
-                                            child: Column(
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.start,
-                                              children: [
-                                                Text(
-                                                  title,
-                                                  maxLines: 1,
-                                                  overflow:
-                                                      TextOverflow.ellipsis,
-                                                  style: const TextStyle(
-                                                    fontWeight: FontWeight.w900,
-                                                    fontSize: 16,
-                                                  ),
-                                                ),
-                                                const SizedBox(height: 2),
-                                                Text(
-                                                  'Date: $date',
-                                                  style: const TextStyle(
-                                                    color: Colors.black54,
-                                                    fontWeight: FontWeight.w600,
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                      const SizedBox(height: 8),
-                                      Wrap(
-                                        spacing: 8,
-                                        runSpacing: 4,
-                                        children: [
-                                          Chip(
-                                            label: Text(
-                                              active ? 'Active' : 'Inactive',
-                                              style: const TextStyle(
-                                                fontSize: 12,
-                                                fontWeight: FontWeight.w700,
-                                              ),
-                                            ),
-                                            padding: EdgeInsets.zero,
-                                            backgroundColor:
-                                                active
-                                                    ? const Color(0xFFE8F5E9)
-                                                    : const Color(0xFFFFEBEE),
-                                          ),
-                                          Chip(
-                                            label: Text(
-                                              _isHttpImageUrl(imageUrl)
-                                                  ? 'Image ready'
-                                                  : 'No image',
-                                              style: const TextStyle(
-                                                fontSize: 12,
-                                                fontWeight: FontWeight.w700,
-                                              ),
-                                            ),
-                                            padding: EdgeInsets.zero,
-                                            backgroundColor: const Color(
+                    return Container(
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF7FAFF),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: const Color(0xFFE6E6E6),
+                        ),
+                      ),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(12),
+                        onTap: () => _previewEvent(context, d.id, e),
+                        child: Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Column(
+                            crossAxisAlignment:
+                            CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                crossAxisAlignment:
+                                CrossAxisAlignment.start,
+                                children: [
+                                  ClipRRect(
+                                    borderRadius: BorderRadius.circular(
+                                      8,
+                                    ),
+                                    child: SizedBox(
+                                      width: 52,
+                                      height: 52,
+                                      child:
+                                      _isHttpImageUrl(imageUrl)
+                                          ? Image.network(
+                                        imageUrl,
+                                        fit: BoxFit.cover,
+                                        errorBuilder: (
+                                            _,
+                                            __,
+                                            ___,
+                                            ) {
+                                          return const ColoredBox(
+                                            color: Color(
                                               0xFFE3F2FD,
                                             ),
+                                            child: Icon(
+                                              Icons
+                                                  .broken_image_outlined,
+                                              color: Color(
+                                                0xFF1565C0,
+                                              ),
+                                            ),
+                                          );
+                                        },
+                                      )
+                                          : const ColoredBox(
+                                        color: Color(
+                                          0xFFE3F2FD,
+                                        ),
+                                        child: Icon(
+                                          Icons
+                                              .event_note_outlined,
+                                          color: Color(
+                                            0xFF1565C0,
                                           ),
-                                        ],
+                                        ),
                                       ),
-                                      const SizedBox(height: 6),
-                                      Text(
-                                        (e['description'] ?? e['message'] ?? '')
-                                            .toString(),
-                                        maxLines: 2,
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                      const SizedBox(height: 8),
-                                      Row(
-                                        mainAxisAlignment:
-                                            MainAxisAlignment.end,
-                                        children: [
-                                          IconButton(
-                                            tooltip: 'Preview',
-                                            icon: const Icon(
-                                              Icons.visibility_outlined,
-                                            ),
-                                            onPressed: () =>
-                                                _previewEvent(context, d.id, e),
-                                          ),
-                                          IconButton(
-                                            tooltip: active
-                                                ? 'Set inactive'
-                                                : 'Set active',
-                                            icon: Icon(
-                                              active
-                                                  ? Icons.toggle_on_outlined
-                                                  : Icons.toggle_off_outlined,
-                                            ),
-                                            onPressed: () => _toggleEventActive(
-                                              context,
-                                              d.id,
-                                              active,
-                                            ),
-                                          ),
-                                          IconButton(
-                                            icon: const Icon(
-                                              Icons.edit_outlined,
-                                            ),
-                                            onPressed: () => _addOrEditEvent(
-                                              context,
-                                              eventId: d.id,
-                                              data: e,
-                                            ),
-                                          ),
-                                          IconButton(
-                                            icon: const Icon(
-                                              Icons.delete_outline,
-                                            ),
-                                            onPressed: () =>
-                                                _deleteEvent(context, d.id, title),
-                                          ),
-                                        ],
-                                      ),
-                                    ],
+                                    ),
                                   ),
-                                ),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                      CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          title,
+                                          maxLines: 1,
+                                          overflow:
+                                          TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.w900,
+                                            fontSize: 16,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          'Date: $date',
+                                          style: const TextStyle(
+                                            color: Colors.black54,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
                               ),
-                            );
-                          },
+                              const SizedBox(height: 8),
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 4,
+                                children: [
+                                  Chip(
+                                    label: Text(
+                                      active ? 'Active' : 'Inactive',
+                                      style: const TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                    padding: EdgeInsets.zero,
+                                    backgroundColor:
+                                    active
+                                        ? const Color(0xFFE8F5E9)
+                                        : const Color(0xFFFFEBEE),
+                                  ),
+                                  Chip(
+                                    label: Text(
+                                      _isHttpImageUrl(imageUrl)
+                                          ? 'Image ready'
+                                          : 'No image',
+                                      style: const TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                    padding: EdgeInsets.zero,
+                                    backgroundColor: const Color(
+                                      0xFFE3F2FD,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 6),
+                              Text(
+                                (e['description'] ?? e['message'] ?? '')
+                                    .toString(),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              const SizedBox(height: 8),
+                              Row(
+                                mainAxisAlignment:
+                                MainAxisAlignment.end,
+                                children: [
+                                  IconButton(
+                                    tooltip: 'Preview',
+                                    icon: const Icon(
+                                      Icons.visibility_outlined,
+                                    ),
+                                    onPressed:
+                                        () => _previewEvent(
+                                      context,
+                                      d.id,
+                                      e,
+                                    ),
+                                  ),
+                                  IconButton(
+                                    tooltip:
+                                    active
+                                        ? 'Set inactive'
+                                        : 'Set active',
+                                    icon: Icon(
+                                      active
+                                          ? Icons.toggle_on_outlined
+                                          : Icons.toggle_off_outlined,
+                                    ),
+                                    onPressed:
+                                        () => _toggleEventActive(
+                                      context,
+                                      d.id,
+                                      active,
+                                    ),
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(
+                                      Icons.edit_outlined,
+                                    ),
+                                    onPressed:
+                                        () => _addOrEditEvent(
+                                      context,
+                                      eventId: d.id,
+                                      data: e,
+                                    ),
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(
+                                      Icons.delete_outline,
+                                    ),
+                                    onPressed:
+                                        () => _deleteEvent(
+                                      context,
+                                      d.id,
+                                      title,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
                         ),
+                      ),
+                    );
+                  },
+                ),
               ),
             ],
           ),
@@ -1903,7 +2585,8 @@ class EventsAdminTab extends StatelessWidget {
 
 class ReportsAdminTab extends StatefulWidget {
   final FirestoreService svc;
-  const ReportsAdminTab({super.key, required this.svc});
+  final String? fixedStoreId;
+  const ReportsAdminTab({super.key, required this.svc, this.fixedStoreId});
 
   @override
   State<ReportsAdminTab> createState() => _ReportsAdminTabState();
@@ -1913,7 +2596,7 @@ enum _ReportPeriod { weekly, monthly, yearly }
 
 class _ReportsAdminTabState extends State<ReportsAdminTab> {
   bool _loading = false;
-  _ReportPeriod _selectedPeriod = _ReportPeriod.monthly;
+  _ReportPeriod _selectedPeriod = _ReportPeriod.yearly;
   Future<Map<String, dynamic>>? _reportFuture;
   Map<String, dynamic>? _lastReportData;
 
@@ -1963,9 +2646,29 @@ class _ReportsAdminTabState extends State<ReportsAdminTab> {
     return DateTime.fromMillisecondsSinceEpoch(0);
   }
 
+  int _asInt(dynamic v, {int fallback = 0}) {
+    if (v is int) return v;
+    if (v is num) return v.toInt();
+    if (v is String) {
+      final parsed = int.tryParse(v.trim());
+      if (parsed != null) return parsed;
+    }
+    return fallback;
+  }
+
+  double _asDouble(dynamic v, {double fallback = 0.0}) {
+    if (v is num) return v.toDouble();
+    if (v is String) {
+      final parsed = double.tryParse(v.trim());
+      if (parsed != null) return parsed;
+    }
+    return fallback;
+  }
+
   DateTime _docTime(Map<String, dynamic> data) {
     return _asDate(
       data['createdAt'] ??
+          data['paidAt'] ??
           data['updatedAt'] ??
           data['claimedAt'] ??
           data['endAt'],
@@ -1973,9 +2676,9 @@ class _ReportsAdminTabState extends State<ReportsAdminTab> {
   }
 
   ({DateTime start, DateTime end}) _periodRange(
-    _ReportPeriod period,
-    DateTime now,
-  ) {
+      _ReportPeriod period,
+      DateTime now,
+      ) {
     final dayStart = _atStartOfDay(now);
     if (period == _ReportPeriod.weekly) {
       final weekStart = dayStart.subtract(Duration(days: dayStart.weekday - 1));
@@ -1984,9 +2687,9 @@ class _ReportsAdminTabState extends State<ReportsAdminTab> {
     if (period == _ReportPeriod.monthly) {
       final monthStart = DateTime(dayStart.year, dayStart.month, 1);
       final monthEnd =
-          (dayStart.month == 12)
-              ? DateTime(dayStart.year + 1, 1, 1)
-              : DateTime(dayStart.year, dayStart.month + 1, 1);
+      (dayStart.month == 12)
+          ? DateTime(dayStart.year + 1, 1, 1)
+          : DateTime(dayStart.year, dayStart.month + 1, 1);
       return (start: monthStart, end: monthEnd);
     }
     final yearStart = DateTime(dayStart.year, 1, 1);
@@ -2017,13 +2720,13 @@ class _ReportsAdminTabState extends State<ReportsAdminTab> {
   }
 
   Future<List<QueryDocumentSnapshot<Map<String, dynamic>>>> _safeQueryDocs(
-    Future<QuerySnapshot<Map<String, dynamic>>> Function() loader,
-  ) async {
+      Future<QuerySnapshot<Map<String, dynamic>>> Function() loader,
+      ) async {
     try {
       final snap = await loader();
       return snap.docs;
     } on FirebaseException catch (e) {
-      if (e.code == 'permission-denied') {
+      if (e.code == 'permission-denied' || e.code == 'failed-precondition') {
         return const <QueryDocumentSnapshot<Map<String, dynamic>>>[];
       }
       rethrow;
@@ -2035,7 +2738,7 @@ class _ReportsAdminTabState extends State<ReportsAdminTab> {
     try {
       return await widget.svc.ordersAllForAdmin();
     } on FirebaseException catch (e) {
-      if (e.code == 'permission-denied') {
+      if (e.code == 'permission-denied' || e.code == 'failed-precondition') {
         return const <QueryDocumentSnapshot<Map<String, dynamic>>>[];
       }
       rethrow;
@@ -2047,6 +2750,10 @@ class _ReportsAdminTabState extends State<ReportsAdminTab> {
     final range = _periodRange(_selectedPeriod, now);
     final start = range.start;
     final end = range.end;
+    final cleanStoreId = (widget.fixedStoreId ?? '').trim();
+    final cleanStoreIdLower = cleanStoreId.toLowerCase();
+    final scoped = cleanStoreId.isNotEmpty;
+    final periodCode = _periodCode(_selectedPeriod);
 
     final db = FirebaseFirestore.instance;
 
@@ -2062,62 +2769,152 @@ class _ReportsAdminTabState extends State<ReportsAdminTab> {
     ]);
 
     final storesDocs =
-        results[0] as List<QueryDocumentSnapshot<Map<String, dynamic>>>;
+    results[0] as List<QueryDocumentSnapshot<Map<String, dynamic>>>;
     final promosDocs =
-        results[1] as List<QueryDocumentSnapshot<Map<String, dynamic>>>;
+    results[1] as List<QueryDocumentSnapshot<Map<String, dynamic>>>;
     final productsDocs =
-        results[2] as List<QueryDocumentSnapshot<Map<String, dynamic>>>;
+    results[2] as List<QueryDocumentSnapshot<Map<String, dynamic>>>;
     final usersDocs =
-        results[3] as List<QueryDocumentSnapshot<Map<String, dynamic>>>;
+    results[3] as List<QueryDocumentSnapshot<Map<String, dynamic>>>;
     final reviewsDocs =
-        results[4] as List<QueryDocumentSnapshot<Map<String, dynamic>>>;
+    results[4] as List<QueryDocumentSnapshot<Map<String, dynamic>>>;
     final eventsDocs =
-        results[5] as List<QueryDocumentSnapshot<Map<String, dynamic>>>;
+    results[5] as List<QueryDocumentSnapshot<Map<String, dynamic>>>;
     final pricesDocs =
-        results[6] as List<QueryDocumentSnapshot<Map<String, dynamic>>>;
+    results[6] as List<QueryDocumentSnapshot<Map<String, dynamic>>>;
     final ordersDocs =
-        results[7] as List<QueryDocumentSnapshot<Map<String, dynamic>>>;
+    results[7] as List<QueryDocumentSnapshot<Map<String, dynamic>>>;
 
     final stores =
-        storesDocs
-            .where((d) => _inRange(_docTime(d.data()), start, end))
-            .toList();
+    storesDocs
+        .where((d) {
+      if (!scoped) return true;
+      return d.id.toLowerCase() == cleanStoreIdLower;
+    })
+        .where((d) => _inRange(_docTime(d.data()), start, end))
+        .toList();
+
     final promotions =
-        promosDocs
-            .where((d) => _inRange(_docTime(d.data()), start, end))
-            .toList();
+    promosDocs
+        .where((d) {
+      if (!scoped) return true;
+      final sid = (d.data()['storeId'] ?? '').toString().trim().toLowerCase();
+      return sid == cleanStoreIdLower;
+    })
+        .where((d) => _inRange(_docTime(d.data()), start, end))
+        .toList();
+
+    final scopedProducts =
+    productsDocs.where((d) {
+      if (!scoped) return true;
+      final sid = (d.data()['storeId'] ?? '').toString().trim().toLowerCase();
+      return sid == cleanStoreIdLower;
+    }).toList();
+
+    final scopedProductIds = <String>{};
+    for (final p in scopedProducts) {
+      scopedProductIds.add(p.id);
+    }
+
+    if (scoped) {
+      for (final priceDoc in pricesDocs) {
+        final priceStoreId =
+            (priceDoc.data()['storeId'] ?? priceDoc.id)
+                .toString()
+                .trim()
+                .toLowerCase();
+        if (priceStoreId != cleanStoreIdLower) continue;
+
+        final pid = priceDoc.reference.parent.parent?.id ?? '';
+        if (pid.isNotEmpty) {
+          scopedProductIds.add(pid);
+        }
+      }
+
+      if (scopedProductIds.isEmpty) {
+        for (final productDoc in productsDocs) {
+          try {
+            final snap = await productDoc.reference
+                .collection('prices')
+                .where('storeId', isEqualTo: cleanStoreId)
+                .limit(1)
+                .get();
+
+            if (snap.docs.isNotEmpty) {
+              scopedProductIds.add(productDoc.id);
+            }
+          } on FirebaseException catch (e) {
+            if (e.code == 'permission-denied' ||
+                e.code == 'failed-precondition') {
+              continue;
+            }
+            rethrow;
+          }
+        }
+      }
+    }
+
+    final allStoreProducts =
+    scoped
+        ? productsDocs.where((d) => scopedProductIds.contains(d.id)).toList()
+        : productsDocs;
+
     final products =
-        productsDocs
-            .where((d) => _inRange(_docTime(d.data()), start, end))
-            .toList();
+    allStoreProducts
+        .where((d) => _inRange(_docTime(d.data()), start, end))
+        .toList();
+
     final users =
-        usersDocs
-            .where((d) => _inRange(_docTime(d.data()), start, end))
-            .toList();
+    usersDocs
+        .where((d) {
+      if (!scoped) return true;
+      final sid = (d.data()['storeId'] ?? '').toString().trim().toLowerCase();
+      return sid == cleanStoreIdLower;
+    })
+        .where((d) => _inRange(_docTime(d.data()), start, end))
+        .toList();
+
     final reviews =
-        reviewsDocs
-            .where((d) => _inRange(_docTime(d.data()), start, end))
-            .toList();
+    reviewsDocs
+        .where((d) {
+      if (!scoped) return true;
+      final review = d.data();
+      final sid = (review['storeId'] ?? '').toString().trim().toLowerCase();
+      if (sid == cleanStoreIdLower) return true;
+
+      final pid = (review['productId'] ?? '').toString().trim();
+      return scopedProductIds.contains(pid);
+    })
+        .where((d) => _inRange(_docTime(d.data()), start, end))
+        .toList();
+
     final events =
-        eventsDocs
-            .where((d) => _inRange(_docTime(d.data()), start, end))
-            .toList();
+    eventsDocs
+        .where((d) {
+      if (!scoped) return true;
+      final sid = (d.data()['storeId'] ?? '').toString().trim().toLowerCase();
+      return sid == cleanStoreIdLower;
+    })
+        .where((d) => _inRange(_docTime(d.data()), start, end))
+        .toList();
 
     final productIds = <String>{};
+    final productCategoryById = <String, String>{};
     int totalPriceEntries = 0;
-    final Map<String, int> categoryCount = {};
 
     for (final product in products) {
       final data = product.data();
       productIds.add(product.id);
 
       final category = (data['category'] ?? 'Uncategorized').toString().trim();
-      categoryCount[category] = (categoryCount[category] ?? 0) + 1;
+      productCategoryById[product.id] =
+      category.isEmpty ? 'Uncategorized' : category;
     }
 
     for (final priceDoc in pricesDocs) {
       final productId = priceDoc.reference.parent.parent?.id ?? '';
       if (productId.isEmpty || !productIds.contains(productId)) continue;
+
       if (_inRange(_docTime(priceDoc.data()), start, end)) {
         totalPriceEntries++;
       }
@@ -2138,25 +2935,245 @@ class _ReportsAdminTabState extends State<ReportsAdminTab> {
     }
 
     int totalOrders = 0;
+    int totalOrderItems = 0;
     double totalRevenue = 0.0;
+    int ordersInPeriod = 0;
+
+    final categoryItemCount = <String, int>{};
+    final categoryOrderCount = <String, int>{};
+
     for (final orderDoc in ordersDocs) {
       final order = orderDoc.data();
+
       if (!_inRange(_docTime(order), start, end)) continue;
-      totalOrders++;
-      final total = order['total'];
-      if (total is num) {
-        totalRevenue += total.toDouble();
+      ordersInPeriod++;
+
+      final items = (order['items'] as List?) ?? const [];
+
+      if (!scoped) {
+        double orderRevenue = 0.0;
+        final categoriesInOrder = <String>{};
+        int orderItemQty = 0;
+        bool hasAnyValidItem = false;
+
+        for (final raw in items) {
+          if (raw is! Map) continue;
+
+          final item = Map<String, dynamic>.from(raw);
+          final pid = (item['productId'] ?? '').toString().trim();
+
+          int qty = 1;
+          final qtyRaw = item['qty'];
+          if (qtyRaw is int) qty = qtyRaw;
+          if (qtyRaw is num) qty = qtyRaw.toInt();
+          if (qty <= 0) qty = 1;
+
+          double lineTotal = 0.0;
+          final lt = item['lineTotal'];
+          if (lt is num) {
+            lineTotal = lt.toDouble();
+          } else {
+            final up = item['unitPrice'];
+            if (up is num) {
+              lineTotal = up.toDouble() * qty;
+            }
+          }
+
+          hasAnyValidItem = true;
+          orderRevenue += lineTotal;
+          orderItemQty += qty;
+
+          final category = (productCategoryById[pid] ?? 'Uncategorized').trim();
+          final safeCategory = category.isEmpty ? 'Uncategorized' : category;
+
+          categoryItemCount[safeCategory] =
+              (categoryItemCount[safeCategory] ?? 0) + qty;
+          categoriesInOrder.add(safeCategory);
+        }
+
+        if (!hasAnyValidItem) {
+          final total = order['total'];
+          if (total is num && total.toDouble() > 0) {
+            totalOrders++;
+            totalRevenue += total.toDouble();
+          }
+        } else {
+          totalOrders++;
+          totalOrderItems += orderItemQty;
+          totalRevenue += orderRevenue;
+        }
+
+        for (final category in categoriesInOrder) {
+          categoryOrderCount[category] =
+              (categoryOrderCount[category] ?? 0) + 1;
+        }
+
+        continue;
+      }
+
+      bool hasThisStoreItem = false;
+      double thisStoreRevenue = 0.0;
+      int thisStoreItemQty = 0;
+      final categoriesInOrder = <String>{};
+      final orderStoreId =
+          (order['storeId'] ?? '').toString().trim().toLowerCase();
+
+      for (final raw in items) {
+        if (raw is! Map) continue;
+
+        final item = Map<String, dynamic>.from(raw);
+
+        final itemStoreId =
+            (item['storeId'] ?? '').toString().trim().toLowerCase();
+        final itemProductId = (item['productId'] ?? '').toString().trim();
+
+        final belongsToThisStore =
+            itemStoreId == cleanStoreIdLower ||
+                (itemStoreId.isEmpty && scopedProductIds.contains(itemProductId));
+
+        if (!belongsToThisStore) continue;
+
+        int qty = 1;
+        final qtyRaw = item['qty'];
+        if (qtyRaw is int) qty = qtyRaw;
+        if (qtyRaw is num) qty = qtyRaw.toInt();
+        if (qty <= 0) qty = 1;
+
+        double lineTotal = 0.0;
+        final lt = item['lineTotal'];
+        if (lt is num) {
+          lineTotal = lt.toDouble();
+        } else {
+          final up = item['unitPrice'];
+          if (up is num) {
+            lineTotal = up.toDouble() * qty;
+          } else {
+            final orderTotal = order['total'];
+            if (orderTotal is num && qty > 0 && items.isNotEmpty) {
+              lineTotal = orderTotal.toDouble() / items.length;
+            }
+          }
+        }
+
+        hasThisStoreItem = true;
+        thisStoreRevenue += lineTotal;
+        thisStoreItemQty += qty;
+
+        final category =
+        (productCategoryById[itemProductId] ?? 'Uncategorized').trim();
+        final safeCategory = category.isEmpty ? 'Uncategorized' : category;
+
+        categoryItemCount[safeCategory] =
+            (categoryItemCount[safeCategory] ?? 0) + qty;
+        categoriesInOrder.add(safeCategory);
+      }
+
+      if (hasThisStoreItem) {
+        totalOrders++;
+        totalOrderItems += thisStoreItemQty;
+        totalRevenue += thisStoreRevenue;
+
+        for (final category in categoriesInOrder) {
+          categoryOrderCount[category] =
+              (categoryOrderCount[category] ?? 0) + 1;
+        }
+      } else if (orderStoreId == cleanStoreIdLower) {
+        // Legacy fallback for old orders missing per-item storeId.
+        final total = order['total'];
+        if (total is num && total.toDouble() > 0) {
+          totalOrders++;
+          totalRevenue += total.toDouble();
+          totalOrderItems += items.length;
+
+          for (final raw in items) {
+            if (raw is! Map) continue;
+            final item = Map<String, dynamic>.from(raw);
+            final pid = (item['productId'] ?? '').toString().trim();
+            int qty = 1;
+            final qtyRaw = item['qty'];
+            if (qtyRaw is int) qty = qtyRaw;
+            if (qtyRaw is num) qty = qtyRaw.toInt();
+            if (qty <= 0) qty = 1;
+
+            final category =
+                (productCategoryById[pid] ?? 'Uncategorized').trim();
+            final safeCategory =
+                category.isEmpty ? 'Uncategorized' : category;
+            categoryItemCount[safeCategory] =
+                (categoryItemCount[safeCategory] ?? 0) + qty;
+            categoriesInOrder.add(safeCategory);
+          }
+          for (final category in categoriesInOrder) {
+            categoryOrderCount[category] =
+                (categoryOrderCount[category] ?? 0) + 1;
+          }
+        }
       }
     }
 
-    final topCategories =
-        categoryCount.entries.toList()
-          ..sort((a, b) => b.value.compareTo(a.value));
+    final topCategoryStats = <Map<String, dynamic>>[];
+    for (final entry in categoryItemCount.entries) {
+      final category = entry.key;
+      final items = entry.value;
+      final orders = categoryOrderCount[category] ?? 0;
+      topCategoryStats.add({
+        'category': category,
+        'items': items,
+        'orders': orders,
+      });
+    }
+    topCategoryStats.sort((a, b) {
+      final byItems =
+          ((b['items'] as int?) ?? 0).compareTo((a['items'] as int?) ?? 0);
+      if (byItems != 0) return byItems;
+      return ((b['orders'] as int?) ?? 0).compareTo(
+        (a['orders'] as int?) ?? 0,
+      );
+    });
+
+    bool usedCache = false;
+    if (scoped && totalOrders == 0) {
+      try {
+        final cacheSnap =
+            await db
+                .collection('stores')
+                .doc(cleanStoreId)
+                .collection('report_cache')
+                .doc(periodCode)
+                .get();
+        final cache = cacheSnap.data() ?? const <String, dynamic>{};
+        final cacheOrders = _asInt(cache['orders'], fallback: 0);
+        final cacheItems = _asInt(cache['orderItems'], fallback: 0);
+        final cacheRevenue = _asDouble(cache['revenue'], fallback: 0.0);
+        final cacheCatsRaw = cache['topCategoryStats'];
+        final cacheCats = <Map<String, dynamic>>[];
+        if (cacheCatsRaw is List) {
+          for (final row in cacheCatsRaw) {
+            if (row is Map) {
+              cacheCats.add(Map<String, dynamic>.from(row));
+            }
+          }
+        }
+        if (cacheOrders > 0 || cacheItems > 0 || cacheRevenue > 0) {
+          totalOrders = cacheOrders;
+          totalOrderItems = cacheItems;
+          totalRevenue = cacheRevenue;
+          if (cacheCats.isNotEmpty) {
+            topCategoryStats
+              ..clear()
+              ..addAll(cacheCats);
+          }
+          usedCache = true;
+        }
+      } on FirebaseException {
+        // Ignore cache read issues.
+      }
+    }
 
     return {
       'generatedAt': now,
       'periodLabel': _periodLabel(_selectedPeriod),
-      'periodCode': _periodCode(_selectedPeriod),
+      'periodCode': periodCode,
       'periodText': _periodText(start, end),
       'stores': stores.length,
       'promotions': promotions.length,
@@ -2165,11 +3182,14 @@ class _ReportsAdminTabState extends State<ReportsAdminTab> {
       'prices': totalPriceEntries,
       'users': users.length,
       'orders': totalOrders,
+      'ordersInPeriod': ordersInPeriod,
+      'orderItems': totalOrderItems,
       'reviews': reviews.length,
       'events': events.length,
       'activeEvents': activeEvents,
       'revenue': totalRevenue,
-      'topCategories': topCategories.take(6).toList(),
+      'topCategoryStats': topCategoryStats,
+      'usedCache': usedCache,
     };
   }
 
@@ -2179,263 +3199,138 @@ class _ReportsAdminTabState extends State<ReportsAdminTab> {
     final generatedAt = data['generatedAt'] as DateTime;
     final periodLabel = (data['periodLabel'] ?? 'Period').toString();
     final periodText = (data['periodText'] ?? '-').toString();
-    final stores = data['stores'] as int;
-    final promotions = data['promotions'] as int;
-    final activePromotions = data['activePromotions'] as int;
     final products = data['products'] as int;
-    final prices = data['prices'] as int;
-    final users = data['users'] as int;
     final orders = data['orders'] as int;
+    final orderItems = data['orderItems'] as int;
     final reviews = data['reviews'] as int;
-    final events = data['events'] as int;
-    final activeEvents = data['activeEvents'] as int;
     final revenue = (data['revenue'] as num).toDouble();
-    final topCategories =
-        (data['topCategories'] as List).cast<MapEntry<String, int>>();
-
+    final topCategoryStats =
+    (data['topCategoryStats'] as List? ?? const [])
+        .cast<Map<String, dynamic>>();
     final avgRevenuePerOrder = orders > 0 ? revenue / orders : 0.0;
-
-    pw.Widget infoCard(String title, String value) {
-      return pw.Container(
-        padding: const pw.EdgeInsets.all(10),
-        decoration: pw.BoxDecoration(
-          border: pw.Border.all(color: PdfColors.grey300),
-          borderRadius: pw.BorderRadius.circular(8),
-        ),
-        child: pw.Column(
-          crossAxisAlignment: pw.CrossAxisAlignment.start,
-          children: [
-            pw.Text(
-              title,
-              style: pw.TextStyle(
-                fontSize: 10,
-                color: PdfColors.grey700,
-                fontWeight: pw.FontWeight.bold,
-              ),
-            ),
-            pw.SizedBox(height: 6),
-            pw.Text(
-              value,
-              style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold),
-            ),
-          ],
-        ),
-      );
-    }
 
     pdf.addPage(
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
-        margin: const pw.EdgeInsets.all(28),
+        margin: const pw.EdgeInsets.all(26),
         build:
             (context) => [
-              pw.Container(
-                padding: const pw.EdgeInsets.all(16),
-                decoration: pw.BoxDecoration(
-                  color: PdfColors.blue50,
-                  borderRadius: pw.BorderRadius.circular(12),
+          pw.Container(
+            padding: const pw.EdgeInsets.all(14),
+            decoration: pw.BoxDecoration(
+              color: PdfColors.grey100,
+              borderRadius: pw.BorderRadius.circular(12),
+            ),
+            child: pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.start,
+              children: [
+                pw.Text(
+                  'VOCAMART ADMIN REPORT',
+                  style: pw.TextStyle(
+                    fontSize: 20,
+                    fontWeight: pw.FontWeight.bold,
+                    color: PdfColors.black,
+                  ),
                 ),
-                child: pw.Column(
-                  crossAxisAlignment: pw.CrossAxisAlignment.start,
-                  children: [
-                    pw.Text(
-                      'VOCAMART ADMIN REPORT',
-                      style: pw.TextStyle(
-                        fontSize: 22,
-                        fontWeight: pw.FontWeight.bold,
-                        color: PdfColors.blue900,
-                      ),
-                    ),
-                    pw.SizedBox(height: 6),
-                    pw.Text(
-                      'System summary report for admin review and printing',
-                      style: const pw.TextStyle(fontSize: 11),
-                    ),
-                    pw.SizedBox(height: 10),
-                    pw.Text(
-                      'Period: $periodLabel ($periodText)',
-                      style: pw.TextStyle(
-                        fontSize: 10,
-                        color: PdfColors.grey700,
-                        fontWeight: pw.FontWeight.bold,
-                      ),
-                    ),
-                    pw.SizedBox(height: 4),
-                    pw.Text(
-                      'Generated on: ${_dateTime(generatedAt)}',
-                      style: pw.TextStyle(
-                        fontSize: 10,
-                        color: PdfColors.grey700,
-                      ),
-                    ),
-                  ],
+                pw.SizedBox(height: 8),
+                pw.Text(
+                  'Period: $periodLabel ($periodText)',
+                  style: pw.TextStyle(
+                    fontSize: 11,
+                    color: PdfColors.grey700,
+                    fontWeight: pw.FontWeight.bold,
+                  ),
                 ),
-              ),
-              pw.SizedBox(height: 20),
-              pw.Text(
-                'Executive Summary',
-                style: pw.TextStyle(
-                  fontSize: 16,
-                  fontWeight: pw.FontWeight.bold,
+                pw.SizedBox(height: 4),
+                pw.Text(
+                  'Generated on: ${_dateTime(generatedAt)}',
+                  style: pw.TextStyle(
+                    fontSize: 10,
+                    color: PdfColors.grey700,
+                  ),
                 ),
-              ),
-              pw.SizedBox(height: 8),
-              pw.Text(
-                'This report provides an overview of the current platform status, including operational data, sales performance, product coverage, user engagement, and promotional activity. It is designed to help administrators review business health quickly and produce a clean printable record for meetings, project documentation, or supervisor presentation.',
-                style: const pw.TextStyle(fontSize: 11, lineSpacing: 2),
-              ),
-              pw.SizedBox(height: 18),
-              pw.Wrap(
-                spacing: 10,
-                runSpacing: 10,
+              ],
+            ),
+          ),
+          pw.SizedBox(height: 18),
+          pw.Text(
+            'Key Metrics',
+            style: pw.TextStyle(
+              fontSize: 15,
+              fontWeight: pw.FontWeight.bold,
+            ),
+          ),
+          pw.SizedBox(height: 10),
+          pw.Table(
+            border: pw.TableBorder.all(color: PdfColors.grey300),
+            columnWidths: {
+              0: const pw.FlexColumnWidth(3),
+              1: const pw.FlexColumnWidth(2),
+            },
+            children: [
+              pw.TableRow(
+                decoration: const pw.BoxDecoration(
+                  color: PdfColors.blue100,
+                ),
                 children: [
-                  pw.SizedBox(
-                    width: 240,
-                    child: infoCard('Total Revenue', _money(revenue)),
-                  ),
-                  pw.SizedBox(
-                    width: 240,
-                    child: infoCard('Total Orders', '$orders'),
-                  ),
-                  pw.SizedBox(
-                    width: 240,
-                    child: infoCard('Total Users', '$users'),
-                  ),
-                  pw.SizedBox(
-                    width: 240,
-                    child: infoCard('Total Products', '$products'),
-                  ),
-                  pw.SizedBox(
-                    width: 240,
-                    child: infoCard('Total Stores', '$stores'),
-                  ),
-                  pw.SizedBox(
-                    width: 240,
-                    child: infoCard('Price Entries', '$prices'),
-                  ),
-                  pw.SizedBox(
-                    width: 240,
-                    child: infoCard('Promotions', '$promotions'),
-                  ),
-                  pw.SizedBox(
-                    width: 240,
-                    child: infoCard('Reviews', '$reviews'),
-                  ),
+                  _pdfCell('Metric', bold: true),
+                  _pdfCell('Value', bold: true),
                 ],
               ),
-              pw.SizedBox(height: 20),
-              pw.Text(
-                'Business Highlights',
-                style: pw.TextStyle(
-                  fontSize: 16,
-                  fontWeight: pw.FontWeight.bold,
+              _pdfRow('Revenue', _money(revenue)),
+              _pdfRow('Orders', '$orders'),
+              _pdfRow('Order items', '$orderItems'),
+              _pdfRow('Average order value', _money(avgRevenuePerOrder)),
+              _pdfRow('Products', '$products'),
+              _pdfRow('Reviews', '$reviews'),
+            ],
+          ),
+          pw.SizedBox(height: 14),
+          pw.Text(
+            'Top Categories (By Ordered Items)',
+            style: pw.TextStyle(
+              fontSize: 13,
+              fontWeight: pw.FontWeight.bold,
+            ),
+          ),
+          pw.SizedBox(height: 8),
+          if (topCategoryStats.isEmpty)
+            pw.Text('No category order data in selected period.')
+          else
+            pw.Table(
+              border: pw.TableBorder.all(color: PdfColors.grey300),
+              columnWidths: {
+                0: const pw.FlexColumnWidth(3),
+                1: const pw.FlexColumnWidth(2),
+                2: const pw.FlexColumnWidth(2),
+              },
+              children: [
+                pw.TableRow(
+                  decoration: const pw.BoxDecoration(
+                    color: PdfColors.blue100,
+                  ),
+                  children: [
+                    _pdfCell('Category', bold: true),
+                    _pdfCell('Orders', bold: true),
+                    _pdfCell('Items', bold: true),
+                  ],
                 ),
-              ),
-              pw.SizedBox(height: 10),
-              pw.Bullet(
-                text: 'Active promotions currently running: $activePromotions',
-              ),
-              pw.Bullet(
-                text: 'Active events currently available: $activeEvents',
-              ),
-              pw.Bullet(
-                text:
-                    'Average revenue per order: ${_money(avgRevenuePerOrder)}',
-              ),
-              pw.Bullet(text: 'Total event records: $events'),
-              pw.Bullet(text: 'Total customer reviews collected: $reviews'),
-              pw.SizedBox(height: 20),
-              pw.Text(
-                'Operational Snapshot',
-                style: pw.TextStyle(
-                  fontSize: 16,
-                  fontWeight: pw.FontWeight.bold,
-                ),
-              ),
-              pw.SizedBox(height: 10),
-              pw.Table(
-                border: pw.TableBorder.all(color: PdfColors.grey300),
-                columnWidths: {
-                  0: const pw.FlexColumnWidth(3),
-                  1: const pw.FlexColumnWidth(2),
-                },
-                children: [
+                for (final row in topCategoryStats)
                   pw.TableRow(
-                    decoration: const pw.BoxDecoration(
-                      color: PdfColors.blue100,
-                    ),
                     children: [
-                      _pdfCell('Metric', bold: true),
-                      _pdfCell('Value', bold: true),
+                      _pdfCell((row['category'] ?? '-').toString()),
+                      _pdfCell('${row['orders'] ?? 0}'),
+                      _pdfCell('${row['items'] ?? 0}'),
                     ],
                   ),
-                  _pdfRow('Stores registered', '$stores'),
-                  _pdfRow('Products listed', '$products'),
-                  _pdfRow('Store price entries', '$prices'),
-                  _pdfRow('Users registered', '$users'),
-                  _pdfRow('Orders processed', '$orders'),
-                  _pdfRow('Revenue generated', _money(revenue)),
-                  _pdfRow('Promotions created', '$promotions'),
-                  _pdfRow('Active promotions', '$activePromotions'),
-                  _pdfRow('Events created', '$events'),
-                  _pdfRow('Active events', '$activeEvents'),
-                  _pdfRow('Reviews submitted', '$reviews'),
-                ],
-              ),
-              pw.SizedBox(height: 20),
-              pw.Text(
-                'Top Product Categories',
-                style: pw.TextStyle(
-                  fontSize: 16,
-                  fontWeight: pw.FontWeight.bold,
-                ),
-              ),
-              pw.SizedBox(height: 10),
-              if (topCategories.isEmpty)
-                pw.Text('No category data available.')
-              else
-                pw.Table(
-                  border: pw.TableBorder.all(color: PdfColors.grey300),
-                  columnWidths: {
-                    0: const pw.FlexColumnWidth(1),
-                    1: const pw.FlexColumnWidth(4),
-                    2: const pw.FlexColumnWidth(2),
-                  },
-                  children: [
-                    pw.TableRow(
-                      decoration: const pw.BoxDecoration(
-                        color: PdfColors.grey200,
-                      ),
-                      children: [
-                        _pdfCell('No.', bold: true),
-                        _pdfCell('Category', bold: true),
-                        _pdfCell('Products', bold: true),
-                      ],
-                    ),
-                    for (int i = 0; i < topCategories.length; i++)
-                      pw.TableRow(
-                        children: [
-                          _pdfCell('${i + 1}'),
-                          _pdfCell(topCategories[i].key),
-                          _pdfCell('${topCategories[i].value}'),
-                        ],
-                      ),
-                  ],
-                ),
-              pw.SizedBox(height: 20),
-              pw.Text(
-                'Conclusion',
-                style: pw.TextStyle(
-                  fontSize: 16,
-                  fontWeight: pw.FontWeight.bold,
-                ),
-              ),
-              pw.SizedBox(height: 8),
-              pw.Text(
-                'Overall, this report shows the current administrative and business condition of the system in a concise printable format. It can be used as supporting documentation for internal review, final year project submission, demonstration, or business monitoring.',
-                style: const pw.TextStyle(fontSize: 11, lineSpacing: 2),
-              ),
-            ],
+              ],
+            ),
+          pw.SizedBox(height: 14),
+          pw.Text(
+            'This report intentionally shows only essential numbers for quick decision making.',
+            style: const pw.TextStyle(fontSize: 10, lineSpacing: 2),
+          ),
+        ],
       ),
     );
 
@@ -2501,91 +3396,159 @@ class _ReportsAdminTabState extends State<ReportsAdminTab> {
           return const Center(child: CircularProgressIndicator());
         }
         final revenue = ((data['revenue'] ?? 0.0) as num).toDouble();
+        final orders = (data['orders'] ?? 0) as int;
+        final ordersInPeriod = (data['ordersInPeriod'] ?? 0) as int;
+        final orderItems = (data['orderItems'] ?? 0) as int;
+        final topCategoryStats =
+        (data['topCategoryStats'] as List? ?? const [])
+            .cast<Map<String, dynamic>>();
+        final avgOrderValue = orders > 0 ? revenue / orders : 0.0;
         final periodLabel = (data['periodLabel'] ?? 'Period').toString();
         final periodText = (data['periodText'] ?? '-').toString();
+        final generatedAt =
+            (data['generatedAt'] as DateTime?) ?? DateTime.now();
+        final scoped = (widget.fixedStoreId ?? '').trim().isNotEmpty;
+        final usedCache = data['usedCache'] == true;
 
         return ListView(
           padding: const EdgeInsets.all(14),
           children: [
-            _SectionCountHeader(
-              title: 'Reports',
-              subtitle: '$periodLabel report snapshot.',
-              icon: Icons.assessment_outlined,
-              countText: '${data['orders'] ?? 0}',
-            ),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                ChoiceChip(
-                  label: const Text('Weekly'),
-                  selected: _selectedPeriod == _ReportPeriod.weekly,
-                  onSelected: (selected) {
-                    if (!selected) return;
-                    _setPeriod(_ReportPeriod.weekly);
-                  },
-                ),
-                ChoiceChip(
-                  label: const Text('Monthly'),
-                  selected: _selectedPeriod == _ReportPeriod.monthly,
-                  onSelected: (selected) {
-                    if (!selected) return;
-                    _setPeriod(_ReportPeriod.monthly);
-                  },
-                ),
-                ChoiceChip(
-                  label: const Text('Yearly'),
-                  selected: _selectedPeriod == _ReportPeriod.yearly,
-                  onSelected: (selected) {
-                    if (!selected) return;
-                    _setPeriod(_ReportPeriod.yearly);
-                  },
-                ),
-              ],
-            ),
-            if (snap.connectionState == ConnectionState.waiting) ...[
-              const SizedBox(height: 10),
-              const LinearProgressIndicator(minHeight: 2),
-            ],
-            const SizedBox(height: 6),
-            Text(
-              'Showing data for: $periodText',
-              style: const TextStyle(
-                fontWeight: FontWeight.w700,
-                color: Colors.black54,
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: const Color(0xFFE6E6E6)),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x11000000),
+                    blurRadius: 8,
+                    offset: Offset(0, 2),
+                  ),
+                ],
               ),
-            ),
-            const SizedBox(height: 8),
-            GridView.count(
-              crossAxisCount: 2,
-              crossAxisSpacing: 10,
-              mainAxisSpacing: 10,
-              childAspectRatio: 1.8,
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              children: [
-                _ReportCard(
-                  title: 'Total Revenue',
-                  value: 'RM ${revenue.toStringAsFixed(2)}',
-                  icon: Icons.monetization_on_outlined,
-                ),
-                _ReportCard(
-                  title: 'Total Orders',
-                  value: '${data['orders']}',
-                  icon: Icons.receipt_long_outlined,
-                ),
-                _ReportCard(
-                  title: 'Users',
-                  value: '${data['users']}',
-                  icon: Icons.people_alt_outlined,
-                ),
-                _ReportCard(
-                  title: 'Products',
-                  value: '${data['products']}',
-                  icon: Icons.inventory_2_outlined,
-                ),
-              ],
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Store Performance ($periodLabel)',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w900,
+                      fontSize: 16,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      ChoiceChip(
+                        label: const Text('Weekly'),
+                        selected: _selectedPeriod == _ReportPeriod.weekly,
+                        onSelected: (selected) {
+                          if (!selected) return;
+                          _setPeriod(_ReportPeriod.weekly);
+                        },
+                      ),
+                      ChoiceChip(
+                        label: const Text('Monthly'),
+                        selected: _selectedPeriod == _ReportPeriod.monthly,
+                        onSelected: (selected) {
+                          if (!selected) return;
+                          _setPeriod(_ReportPeriod.monthly);
+                        },
+                      ),
+                      ChoiceChip(
+                        label: const Text('Yearly'),
+                        selected: _selectedPeriod == _ReportPeriod.yearly,
+                        onSelected: (selected) {
+                          if (!selected) return;
+                          _setPeriod(_ReportPeriod.yearly);
+                        },
+                      ),
+                    ],
+                  ),
+                  if (snap.connectionState == ConnectionState.waiting) ...[
+                    const SizedBox(height: 10),
+                    const LinearProgressIndicator(minHeight: 2),
+                  ],
+                  const SizedBox(height: 8),
+                  Text(
+                    'Period: $periodText',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      color: Colors.black54,
+                    ),
+                  ),
+                  if (usedCache) ...[
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Using cached store report data from Super Admin snapshot.',
+                      style: TextStyle(
+                        color: Colors.black54,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                  if (scoped && orders == 0 && ordersInPeriod > 0) ...[
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Warning: Orders exist in this period, but none could be linked to this store. Check order item storeId mapping for old data.',
+                      style: TextStyle(
+                        color: Colors.redAccent,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 10),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: const Color(0xFFE6E6E6)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Orders: $orders | Items: $orderItems | Revenue: RM ${revenue.toStringAsFixed(2)}',
+                          style: const TextStyle(fontWeight: FontWeight.w800),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Average Order Value: RM ${avgOrderValue.toStringAsFixed(2)}',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w700,
+                            color: Colors.black54,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  const Text(
+                    'Top Categories (Ordered)',
+                    style: TextStyle(fontWeight: FontWeight.w900),
+                  ),
+                  const SizedBox(height: 6),
+                  if (topCategoryStats.isEmpty)
+                    const Text('No category order data in this period.')
+                  else
+                    ...topCategoryStats.map((row) {
+                      final category = (row['category'] ?? '-').toString();
+                      final cOrders = (row['orders'] ?? 0).toString();
+                      final cItems = (row['items'] ?? 0).toString();
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: Text(
+                          '$category: $cOrders orders, $cItems items',
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                      );
+                    }),
+                ],
+              ),
             ),
             const SizedBox(height: 12),
             Container(
@@ -2611,16 +3574,15 @@ class _ReportsAdminTabState extends State<ReportsAdminTab> {
                   ),
                   const SizedBox(height: 10),
                   Text('- Period: $periodLabel ($periodText)'),
+                  Text('- Generated: ${_dateTime(generatedAt)}'),
                   Text('- Total Revenue: RM ${revenue.toStringAsFixed(2)}'),
-                  Text('- Total Orders: ${data['orders']}'),
-                  Text('- Total Users: ${data['users']}'),
+                  Text('- Total Orders: $orders'),
+                  Text('- Total Order Items: $orderItems'),
+                  Text(
+                    '- Average Order Value: RM ${avgOrderValue.toStringAsFixed(2)}',
+                  ),
                   Text('- Total Products: ${data['products']}'),
-                  Text('- Total Stores: ${data['stores']}'),
                   Text('- Total Reviews: ${data['reviews']}'),
-                  Text('- Promotions: ${data['promotions']}'),
-                  Text('- Active Promotions: ${data['activePromotions']}'),
-                  Text('- Events: ${data['events']}'),
-                  Text('- Active Events: ${data['activeEvents']}'),
                   const SizedBox(height: 16),
                   SizedBox(
                     width: double.infinity,
@@ -2647,71 +3609,6 @@ class _ReportsAdminTabState extends State<ReportsAdminTab> {
           ],
         );
       },
-    );
-  }
-}
-
-class _ReportCard extends StatelessWidget {
-  final String title;
-  final String value;
-  final IconData icon;
-
-  const _ReportCard({
-    required this.title,
-    required this.value,
-    required this.icon,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFE6E6E6)),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x11000000),
-            blurRadius: 8,
-            offset: Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          CircleAvatar(
-            backgroundColor: const Color(0xFFE3F2FD),
-            foregroundColor: const Color(0xFF1565C0),
-            child: Icon(icon),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w800,
-                    color: Colors.black54,
-                    fontSize: 12,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  value,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w900,
-                    fontSize: 18,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
     );
   }
 }

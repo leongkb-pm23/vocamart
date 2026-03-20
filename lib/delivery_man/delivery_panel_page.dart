@@ -47,7 +47,10 @@ class DeliveryPanelPage extends StatelessWidget {
     if (userId.isEmpty) return '';
     try {
       final doc =
-          await FirebaseFirestore.instance.collection('users').doc(userId).get();
+          await FirebaseFirestore.instance
+              .collection('users')
+              .doc(userId)
+              .get();
       final data = doc.data() ?? const <String, dynamic>{};
       return _text(data['address'] ?? data['location']);
     } on FirebaseException catch (_) {
@@ -81,12 +84,10 @@ class DeliveryPanelPage extends StatelessWidget {
 
   Widget _infoCard(String text, {bool loading = false}) {
     return AppCard(
-      child: loading
-          ? const Center(child: CircularProgressIndicator())
-          : Text(
-              text,
-              style: const TextStyle(fontWeight: FontWeight.w800),
-            ),
+      child:
+          loading
+              ? const Center(child: CircularProgressIndicator())
+              : Text(text, style: const TextStyle(fontWeight: FontWeight.w800)),
     );
   }
 
@@ -107,7 +108,9 @@ class DeliveryPanelPage extends StatelessWidget {
     if (normalized.isEmpty) return;
 
     final q = Uri.encodeComponent(normalized);
-    final googleUri = Uri.parse('https://www.google.com/maps/search/?api=1&query=$q');
+    final googleUri = Uri.parse(
+      'https://www.google.com/maps/search/?api=1&query=$q',
+    );
     final osmUri = Uri.parse('https://www.openstreetmap.org/search?query=$q');
 
     final openedGoogle = await launchUrl(
@@ -223,10 +226,12 @@ class DeliveryPanelPage extends StatelessWidget {
           int onTheWayCount = 0;
           int deliveredCount = 0;
           for (final doc in docs) {
-            final status = normalizeDeliveryStatus(_text(
-              doc.data()['deliveryStatus'],
-              fallback: _text(doc.data()['status'], fallback: 'Assigned'),
-            ));
+            final status = normalizeDeliveryStatus(
+              _text(
+                doc.data()['deliveryStatus'],
+                fallback: _text(doc.data()['status'], fallback: 'Assigned'),
+              ),
+            );
             if (status == 'Delivered') {
               deliveredCount += 1;
             } else if (status == 'On The Way') {
@@ -284,13 +289,17 @@ class DeliveryPanelPage extends StatelessWidget {
                   itemBuilder: (_, i) {
                     final d = docs[i];
                     final assignData = d.data();
-                    final orderPath = (assignData['orderPath'] ?? '').toString();
+                    final orderPath =
+                        (assignData['orderPath'] ?? '').toString();
                     if (orderPath.isEmpty) {
                       return _infoCard('Invalid assignment data.');
                     }
 
-                    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-                      stream: FirebaseFirestore.instance.doc(orderPath).snapshots(),
+                    return StreamBuilder<
+                      DocumentSnapshot<Map<String, dynamic>>
+                    >(
+                      stream:
+                          FirebaseFirestore.instance.doc(orderPath).snapshots(),
                       builder: (context, orderSnap) {
                         if (!orderSnap.hasData) {
                           return _infoCard('', loading: true);
@@ -307,7 +316,10 @@ class DeliveryPanelPage extends StatelessWidget {
                               o['status'],
                               fallback: _text(
                                 assignData['deliveryStatus'],
-                                fallback: _text(assignData['status'], fallback: 'Assigned'),
+                                fallback: _text(
+                                  assignData['status'],
+                                  fallback: 'Assigned',
+                                ),
                               ),
                             ),
                           ),
@@ -320,9 +332,10 @@ class DeliveryPanelPage extends StatelessWidget {
                         final customer = _text(
                           o['customerPhone'] ?? assignData['customerPhone'],
                         );
-                        final fee = (o['deliveryFee'] is num)
-                            ? (o['deliveryFee'] as num).toDouble()
-                            : (assignData['deliveryFee'] is num)
+                        final fee =
+                            (o['deliveryFee'] is num)
+                                ? (o['deliveryFee'] as num).toDouble()
+                                : (assignData['deliveryFee'] is num)
                                 ? (assignData['deliveryFee'] as num).toDouble()
                                 : 5.0;
                         final isOnTheWay = status == 'On The Way';
@@ -333,7 +346,9 @@ class DeliveryPanelPage extends StatelessWidget {
                             decoration: BoxDecoration(
                               color: Colors.white,
                               borderRadius: BorderRadius.circular(14),
-                              border: Border.all(color: const Color(0xFFE2E8E7)),
+                              border: Border.all(
+                                color: const Color(0xFFE2E8E7),
+                              ),
                               boxShadow: const [
                                 BoxShadow(
                                   color: Color(0x11000000),
@@ -364,8 +379,12 @@ class DeliveryPanelPage extends StatelessWidget {
                                           vertical: 5,
                                         ),
                                         decoration: BoxDecoration(
-                                          color: _statusColor(status).withValues(alpha: 0.12),
-                                          borderRadius: BorderRadius.circular(999),
+                                          color: _statusColor(
+                                            status,
+                                          ).withValues(alpha: 0.12),
+                                          borderRadius: BorderRadius.circular(
+                                            999,
+                                          ),
                                         ),
                                         child: Text(
                                           status,
@@ -388,7 +407,8 @@ class DeliveryPanelPage extends StatelessWidget {
                                   ),
                                   const SizedBox(height: 4),
                                   Text('Address: $address'),
-                                  if (customer.isNotEmpty) Text('Customer: $customer'),
+                                  if (customer.isNotEmpty)
+                                    Text('Customer: $customer'),
                                   const SizedBox(height: 10),
                                   Wrap(
                                     spacing: 8,
@@ -414,15 +434,24 @@ class DeliveryPanelPage extends StatelessWidget {
                                             confirmText: 'Update',
                                           );
                                           if (!ok) return;
-                                          await svc.updateOrderByPath(
-                                            orderPath: orderPath,
-                                            data: {
-                                              'deliveryStatus': 'On The Way',
-                                              'status': 'To Receive',
-                                            },
-                                          );
+                                          try {
+                                            await svc
+                                                .updateDeliveryProgressByPath(
+                                                  orderPath: orderPath,
+                                                  deliveryStatus: 'On The Way',
+                                                );
+                                          } catch (e) {
+                                            if (!context.mounted) return;
+                                            ScaffoldMessenger.of(
+                                              context,
+                                            ).showSnackBar(
+                                              SnackBar(content: Text('$e')),
+                                            );
+                                          }
                                         },
-                                        icon: const Icon(Icons.local_shipping_outlined),
+                                        icon: const Icon(
+                                          Icons.local_shipping_outlined,
+                                        ),
                                         label: const Text('On The Way'),
                                       ),
                                       ElevatedButton.icon(
@@ -445,22 +474,33 @@ class DeliveryPanelPage extends StatelessWidget {
                                             confirmText: 'Update',
                                           );
                                           if (!ok) return;
-                                          await svc.updateOrderByPath(
-                                            orderPath: orderPath,
-                                            data: {
-                                              'deliveryStatus': 'Delivered',
-                                              'status': 'Completed',
-                                            },
-                                          );
+                                          try {
+                                            await svc
+                                                .updateDeliveryProgressByPath(
+                                                  orderPath: orderPath,
+                                                  deliveryStatus: 'Delivered',
+                                                );
+                                          } catch (e) {
+                                            if (!context.mounted) return;
+                                            ScaffoldMessenger.of(
+                                              context,
+                                            ).showSnackBar(
+                                              SnackBar(content: Text('$e')),
+                                            );
+                                          }
                                         },
-                                        icon: const Icon(Icons.check_circle_outline),
+                                        icon: const Icon(
+                                          Icons.check_circle_outline,
+                                        ),
                                         label: const Text('Delivered'),
                                       ),
                                       OutlinedButton.icon(
                                         onPressed: () async {
                                           if (address.trim().isEmpty ||
                                               address == 'No address') {
-                                            ScaffoldMessenger.of(context).showSnackBar(
+                                            ScaffoldMessenger.of(
+                                              context,
+                                            ).showSnackBar(
                                               const SnackBar(
                                                 content: Text(
                                                   'No address found for this order.',
@@ -472,7 +512,8 @@ class DeliveryPanelPage extends StatelessWidget {
                                           final ok = await showConfirmDialog(
                                             context,
                                             title: 'Open Route',
-                                            message: 'Open route in OpenStreetMap?',
+                                            message:
+                                                'Open route in OpenStreetMap?',
                                             confirmText: 'Open',
                                           );
                                           if (!ok) return;
@@ -496,7 +537,8 @@ class DeliveryPanelPage extends StatelessWidget {
                         return FutureBuilder<String>(
                           future: _loadAddressFromUserProfile(orderPath),
                           builder: (context, addrSnap) {
-                            if (addrSnap.connectionState == ConnectionState.waiting) {
+                            if (addrSnap.connectionState ==
+                                ConnectionState.waiting) {
                               return _infoCard('', loading: true);
                             }
                             final fallbackAddress = _text(
@@ -620,15 +662,16 @@ class DeliveryProfilePage extends StatelessWidget {
       );
       if (deliveredAt.isBefore(start) || !deliveredAt.isBefore(end)) return;
 
-      final fee = (data['deliveryFee'] is num)
-          ? (data['deliveryFee'] as num).toDouble()
-          : _defaultDeliveryFee;
-      final customer = (data['customerName'] ?? data['customerPhone'] ?? '-')
-          .toString()
-          .trim();
-      final address = (data['deliveryAddress'] ?? data['address'] ?? '-')
-          .toString()
-          .trim();
+      final fee =
+          (data['deliveryFee'] is num)
+              ? (data['deliveryFee'] as num).toDouble()
+              : _defaultDeliveryFee;
+      final customer =
+          (data['customerName'] ?? data['customerPhone'] ?? '-')
+              .toString()
+              .trim();
+      final address =
+          (data['deliveryAddress'] ?? data['address'] ?? '-').toString().trim();
 
       rows.add({
         'orderId': orderId,
@@ -641,30 +684,24 @@ class DeliveryProfilePage extends StatelessWidget {
     }
 
     try {
-      final byUid = await FirebaseFirestore.instance
-          .collectionGroup('orders')
-          .where('deliveryUid', isEqualTo: uid)
-          .get();
+      final byUid =
+          await FirebaseFirestore.instance
+              .collectionGroup('orders')
+              .where('deliveryUid', isEqualTo: uid)
+              .get();
       for (final doc in byUid.docs) {
-        addOrderRow(
-          doc.id,
-          doc.data(),
-          key: doc.reference.path,
-        );
+        addOrderRow(doc.id, doc.data(), key: doc.reference.path);
       }
     } on FirebaseException catch (_) {}
 
     try {
-      final byId = await FirebaseFirestore.instance
-          .collectionGroup('orders')
-          .where('deliveryId', isEqualTo: uid)
-          .get();
+      final byId =
+          await FirebaseFirestore.instance
+              .collectionGroup('orders')
+              .where('deliveryId', isEqualTo: uid)
+              .get();
       for (final doc in byId.docs) {
-        addOrderRow(
-          doc.id,
-          doc.data(),
-          key: doc.reference.path,
-        );
+        addOrderRow(doc.id, doc.data(), key: doc.reference.path);
       }
     } on FirebaseException catch (_) {}
 
@@ -672,11 +709,12 @@ class DeliveryProfilePage extends StatelessWidget {
     // but assigned_orders still contains orderPath.
     if (rows.isEmpty) {
       try {
-        final assigned = await FirebaseFirestore.instance
-            .collection('delivery_staff')
-            .doc(uid)
-            .collection('assigned_orders')
-            .get();
+        final assigned =
+            await FirebaseFirestore.instance
+                .collection('delivery_staff')
+                .doc(uid)
+                .collection('assigned_orders')
+                .get();
 
         for (final doc in assigned.docs) {
           final path = (doc.data()['orderPath'] ?? '').toString().trim();
@@ -730,7 +768,9 @@ class DeliveryProfilePage extends StatelessWidget {
     required List<Map<String, dynamic>> rows,
   }) async {
     final monthLabel = DateFormat('MMMM yyyy').format(month);
-    final generatedAt = DateFormat('dd MMM yyyy, hh:mm a').format(DateTime.now());
+    final generatedAt = DateFormat(
+      'dd MMM yyyy, hh:mm a',
+    ).format(DateTime.now());
     double total = 0;
     for (final row in rows) {
       final fee = row['fee'];
@@ -742,99 +782,122 @@ class DeliveryProfilePage extends StatelessWidget {
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
         margin: const pw.EdgeInsets.all(28),
-        build: (context) => [
-          pw.Container(
-            padding: const pw.EdgeInsets.all(14),
-            decoration: pw.BoxDecoration(
-              color: PdfColors.teal50,
-              borderRadius: pw.BorderRadius.circular(12),
-            ),
-            child: pw.Column(
-              crossAxisAlignment: pw.CrossAxisAlignment.start,
-              children: [
-                pw.Text(
-                  'DELIVERY MONTHLY SALARY BILL',
-                  style: pw.TextStyle(
-                    fontSize: 20,
-                    fontWeight: pw.FontWeight.bold,
-                    color: PdfColors.teal900,
-                  ),
+        build:
+            (context) => [
+              pw.Container(
+                padding: const pw.EdgeInsets.all(14),
+                decoration: pw.BoxDecoration(
+                  color: PdfColors.teal50,
+                  borderRadius: pw.BorderRadius.circular(12),
                 ),
-                pw.SizedBox(height: 6),
-                pw.Text('Month: $monthLabel'),
-                pw.Text('Delivery Staff: $staffName'),
-                if (staffEmail.trim().isNotEmpty) pw.Text('Email: $staffEmail'),
-                pw.Text('Generated: $generatedAt'),
-              ],
-            ),
-          ),
-          pw.SizedBox(height: 14),
-          pw.Row(
-            children: [
-              pw.Expanded(
-                child: _pdfCell(
-                  'Delivered Orders: ${rows.length}',
-                  bold: true,
-                  background: PdfColors.grey100,
-                ),
-              ),
-              pw.SizedBox(width: 10),
-              pw.Expanded(
-                child: _pdfCell(
-                  'Total Salary: RM ${total.toStringAsFixed(2)}',
-                  bold: true,
-                  background: PdfColors.grey100,
-                  align: pw.TextAlign.right,
-                ),
-              ),
-            ],
-          ),
-          pw.SizedBox(height: 14),
-          if (rows.isEmpty)
-            pw.Text('No delivered orders for this month.')
-          else
-            pw.Table(
-              border: pw.TableBorder.all(color: PdfColors.grey300, width: 0.7),
-              columnWidths: {
-                0: const pw.FlexColumnWidth(2),
-                1: const pw.FlexColumnWidth(2.2),
-                2: const pw.FlexColumnWidth(3.8),
-                3: const pw.FlexColumnWidth(1.6),
-                4: const pw.FlexColumnWidth(1.8),
-              },
-              children: [
-                pw.TableRow(
+                child: pw.Column(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
                   children: [
-                    _pdfCell('Order ID', bold: true, background: PdfColors.teal100),
-                    _pdfCell('Delivered Date', bold: true, background: PdfColors.teal100),
-                    _pdfCell('Address', bold: true, background: PdfColors.teal100),
-                    _pdfCell('Customer', bold: true, background: PdfColors.teal100),
-                    _pdfCell(
-                      'Fee (RM)',
-                      bold: true,
-                      background: PdfColors.teal100,
-                      align: pw.TextAlign.right,
+                    pw.Text(
+                      'DELIVERY MONTHLY SALARY BILL',
+                      style: pw.TextStyle(
+                        fontSize: 20,
+                        fontWeight: pw.FontWeight.bold,
+                        color: PdfColors.teal900,
+                      ),
                     ),
+                    pw.SizedBox(height: 6),
+                    pw.Text('Month: $monthLabel'),
+                    pw.Text('Delivery Staff: $staffName'),
+                    if (staffEmail.trim().isNotEmpty)
+                      pw.Text('Email: $staffEmail'),
+                    pw.Text('Generated: $generatedAt'),
                   ],
                 ),
-                for (final row in rows)
-                  pw.TableRow(
-                    children: [
-                      _pdfCell((row['orderId'] ?? '-').toString()),
-                      _pdfCell(
-                        DateFormat('dd/MM/yyyy').format(row['deliveredAt'] as DateTime),
-                      ),
-                      _pdfCell((row['address'] ?? '-').toString()),
-                      _pdfCell((row['customer'] ?? '-').toString()),
-                      _pdfCell(
-                        (row['fee'] as num).toDouble().toStringAsFixed(2),
-                        align: pw.TextAlign.right,
-                      ),
-                    ],
+              ),
+              pw.SizedBox(height: 14),
+              pw.Row(
+                children: [
+                  pw.Expanded(
+                    child: _pdfCell(
+                      'Delivered Orders: ${rows.length}',
+                      bold: true,
+                      background: PdfColors.grey100,
+                    ),
                   ),
-              ],
-            ),
-        ],
+                  pw.SizedBox(width: 10),
+                  pw.Expanded(
+                    child: _pdfCell(
+                      'Total Salary: RM ${total.toStringAsFixed(2)}',
+                      bold: true,
+                      background: PdfColors.grey100,
+                      align: pw.TextAlign.right,
+                    ),
+                  ),
+                ],
+              ),
+              pw.SizedBox(height: 14),
+              if (rows.isEmpty)
+                pw.Text('No delivered orders for this month.')
+              else
+                pw.Table(
+                  border: pw.TableBorder.all(
+                    color: PdfColors.grey300,
+                    width: 0.7,
+                  ),
+                  columnWidths: {
+                    0: const pw.FlexColumnWidth(2),
+                    1: const pw.FlexColumnWidth(2.2),
+                    2: const pw.FlexColumnWidth(3.8),
+                    3: const pw.FlexColumnWidth(1.6),
+                    4: const pw.FlexColumnWidth(1.8),
+                  },
+                  children: [
+                    pw.TableRow(
+                      children: [
+                        _pdfCell(
+                          'Order ID',
+                          bold: true,
+                          background: PdfColors.teal100,
+                        ),
+                        _pdfCell(
+                          'Delivered Date',
+                          bold: true,
+                          background: PdfColors.teal100,
+                        ),
+                        _pdfCell(
+                          'Address',
+                          bold: true,
+                          background: PdfColors.teal100,
+                        ),
+                        _pdfCell(
+                          'Customer',
+                          bold: true,
+                          background: PdfColors.teal100,
+                        ),
+                        _pdfCell(
+                          'Fee (RM)',
+                          bold: true,
+                          background: PdfColors.teal100,
+                          align: pw.TextAlign.right,
+                        ),
+                      ],
+                    ),
+                    for (final row in rows)
+                      pw.TableRow(
+                        children: [
+                          _pdfCell((row['orderId'] ?? '-').toString()),
+                          _pdfCell(
+                            DateFormat(
+                              'dd/MM/yyyy',
+                            ).format(row['deliveredAt'] as DateTime),
+                          ),
+                          _pdfCell((row['address'] ?? '-').toString()),
+                          _pdfCell((row['customer'] ?? '-').toString()),
+                          _pdfCell(
+                            (row['fee'] as num).toDouble().toStringAsFixed(2),
+                            align: pw.TextAlign.right,
+                          ),
+                        ],
+                      ),
+                  ],
+                ),
+            ],
       ),
     );
     return doc.save();
@@ -920,9 +983,10 @@ class DeliveryProfilePage extends StatelessWidget {
         if (status == 'On The Way') onTheWay += 1;
         if (status == 'Delivered') {
           delivered += 1;
-          final fee = (o['deliveryFee'] is num)
-              ? (o['deliveryFee'] as num).toDouble()
-              : _defaultDeliveryFee;
+          final fee =
+              (o['deliveryFee'] is num)
+                  ? (o['deliveryFee'] as num).toDouble()
+                  : _defaultDeliveryFee;
           if (fee > 0) earnings += fee;
         }
       }
@@ -953,7 +1017,8 @@ class DeliveryProfilePage extends StatelessWidget {
         final orderPath = (data['orderPath'] ?? '').toString();
         if (orderPath.isNotEmpty) {
           try {
-            final orderSnap = await FirebaseFirestore.instance.doc(orderPath).get();
+            final orderSnap =
+                await FirebaseFirestore.instance.doc(orderPath).get();
             if (orderSnap.exists) {
               final o = orderSnap.data() ?? const <String, dynamic>{};
               status = (o['deliveryStatus'] ?? status).toString();
@@ -1011,7 +1076,8 @@ class DeliveryProfilePage extends StatelessWidget {
         ],
       ),
       body: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-        stream: FirebaseFirestore.instance.collection('users').doc(uid).snapshots(),
+        stream:
+            FirebaseFirestore.instance.collection('users').doc(uid).snapshots(),
         builder: (context, userSnap) {
           if (userSnap.hasError) {
             return Center(
@@ -1064,9 +1130,10 @@ class DeliveryProfilePage extends StatelessWidget {
                 },
                 onToggleDuty: (setOnDuty) async {
                   final title = setOnDuty ? 'Turn On Duty' : 'Turn Off Duty';
-                  final msg = setOnDuty
-                      ? 'Set yourself as ON DUTY now? Admin can assign orders to you.'
-                      : 'Set yourself as OFF DUTY now? Admin cannot assign orders to you.';
+                  final msg =
+                      setOnDuty
+                          ? 'Set yourself as ON DUTY now? Admin can assign orders to you.'
+                          : 'Set yourself as OFF DUTY now? Admin cannot assign orders to you.';
                   final ok = await showConfirmDialog(
                     context,
                     title: title,
@@ -1167,7 +1234,10 @@ class _DeliveryProfileBody extends StatelessWidget {
                 ),
               const SizedBox(height: 10),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
                 decoration: BoxDecoration(
                   color: Colors.white.withValues(alpha: 0.17),
                   borderRadius: BorderRadius.circular(999),
@@ -1192,9 +1262,10 @@ class _DeliveryProfileBody extends StatelessWidget {
                       vertical: 6,
                     ),
                     decoration: BoxDecoration(
-                      color: onDuty
-                          ? const Color(0xFF1B5E20).withValues(alpha: 0.35)
-                          : const Color(0xFFB71C1C).withValues(alpha: 0.35),
+                      color:
+                          onDuty
+                              ? const Color(0xFF1B5E20).withValues(alpha: 0.35)
+                              : const Color(0xFFB71C1C).withValues(alpha: 0.35),
                       borderRadius: BorderRadius.circular(999),
                     ),
                     child: Text(
@@ -1373,6 +1444,3 @@ class _StatCard extends StatelessWidget {
     );
   }
 }
-
-
-

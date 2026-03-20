@@ -3,7 +3,7 @@
 // 2) UI widgets are built in build() methods.
 // 3) Helper methods are used to keep UI code clean.
 //
-// File purpose: This file handles admin panel page screen/logic.
+// File purpose: This file handles store admin panel page screen/logic.
 
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -15,7 +15,6 @@ import 'package:fyp/Admin/firestore_service.dart';
 import 'package:fyp/User/login.dart';
 import 'package:fyp/Admin/admin_extra_tabs.dart';
 
-// This class defines AdminPanelPage, used for this page/feature.
 class AdminPanelPage extends StatefulWidget {
   const AdminPanelPage({super.key});
 
@@ -27,38 +26,68 @@ class _AdminPanelPageState extends State<AdminPanelPage>
     with SingleTickerProviderStateMixin {
   final _svc = FirestoreService();
   late TabController _tabController;
+  int _selectedTabIndex = 0;
+
+  void _bindTabControllerListener() {
+    _tabController.addListener(() {
+      if (_tabController.indexIsChanging) return;
+      if (!mounted) return;
+      if (_selectedTabIndex == _tabController.index) return;
+      setState(() => _selectedTabIndex = _tabController.index);
+    });
+  }
 
   List<Tab> _tabs() {
     return const [
       Tab(text: "Dashboard"),
-      Tab(text: "Stores"),
       Tab(text: "Promotions"),
       Tab(text: "Products"),
       Tab(text: "Prices"),
-      Tab(text: "Users"),
-      Tab(text: "Orders"),
       Tab(text: "Reviews"),
       Tab(text: "Events"),
       Tab(text: "Reports"),
     ];
   }
 
-  List<Widget> _tabViews() {
+  List<Widget> _tabViews({
+    required String? managedStoreId,
+    required String? managedStoreName,
+  }) {
     return [
-      _DashboardTab(svc: _svc, onOpenTab: _openTab),
-      _StoresTab(svc: _svc),
-      _PromosTab(svc: _svc),
-      _ProductsTab(svc: _svc),
-      _PricesTab(svc: _svc),
-      UsersAdminTab(svc: _svc),
-      OrdersAdminTab(svc: _svc),
-      ReviewsAdminTab(svc: _svc),
-      EventsAdminTab(svc: _svc),
-      ReportsAdminTab(svc: _svc),
+      _DashboardTab(
+        svc: _svc,
+        onOpenTab: _openTab,
+        fixedStoreId: managedStoreId,
+      ),
+      _PromosTab(
+        svc: _svc,
+        fixedStoreId: managedStoreId,
+        fixedStoreName: managedStoreName,
+      ),
+      _ProductsTab(
+        svc: _svc,
+        fixedStoreId: managedStoreId,
+        fixedStoreName: managedStoreName,
+      ),
+      _PricesTab(
+        svc: _svc,
+        fixedStoreId: managedStoreId,
+        fixedStoreName: managedStoreName,
+      ),
+      ReviewsAdminTab(svc: _svc, fixedStoreId: managedStoreId),
+      EventsAdminTab(
+        svc: _svc,
+        fixedStoreId: managedStoreId,
+        fixedStoreName: managedStoreName,
+      ),
+      ReportsAdminTab(svc: _svc, fixedStoreId: managedStoreId),
     ];
   }
 
   void _openTab(int index) {
+    final length = _tabController.length;
+    if (index < 0 || index >= length) return;
+    setState(() => _selectedTabIndex = index);
     _tabController.animateTo(index);
   }
 
@@ -68,7 +97,7 @@ class _AdminPanelPageState extends State<AdminPanelPage>
 
   Scaffold _deniedView() {
     return Scaffold(
-      appBar: AppBar(title: const Text("Admin Panel")),
+      appBar: AppBar(title: const Text("Store Admin Panel")),
       body: Padding(
         padding: const EdgeInsets.all(18),
         child: Center(
@@ -83,7 +112,7 @@ class _AdminPanelPageState extends State<AdminPanelPage>
               ),
               const SizedBox(height: 8),
               const Text(
-                "This page is only for admins.",
+                "This page is only for store admins.",
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 14),
@@ -116,13 +145,30 @@ class _AdminPanelPageState extends State<AdminPanelPage>
     );
   }
 
-  Future<bool> _isAdmin() async {
-    final u = FirebaseAuth.instance.currentUser;
-    if (u == null) return false;
-
-    final doc =
-        await FirebaseFirestore.instance.collection('admins').doc(u.uid).get();
-    return doc.exists;
+  Future<Map<String, dynamic>> _loadAccessContext() async {
+    final isAdmin = await _svc.isAdmin();
+    final store = await _svc.myStoreInfo();
+    String? storeLocation;
+    final storeId = (store['storeId'] ?? '').toString().trim();
+    if (storeId.isNotEmpty) {
+      try {
+        final storeDoc =
+            await FirebaseFirestore.instance
+                .collection('stores')
+                .doc(storeId)
+                .get();
+        final data = storeDoc.data() ?? const <String, dynamic>{};
+        storeLocation = (data['location'] ?? '').toString().trim();
+      } on FirebaseException {
+        storeLocation = null;
+      }
+    }
+    return {
+      'isAdmin': isAdmin,
+      'storeId': store['storeId'],
+      'storeName': store['storeName'],
+      'storeLocation': storeLocation,
+    };
   }
 
   Future<void> _logout() async {
@@ -145,7 +191,8 @@ class _AdminPanelPageState extends State<AdminPanelPage>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 10, vsync: this);
+    _tabController = TabController(length: _tabs().length, vsync: this);
+    _bindTabControllerListener();
   }
 
   @override
@@ -156,22 +203,41 @@ class _AdminPanelPageState extends State<AdminPanelPage>
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<bool>(
-      future: _isAdmin(),
+    return FutureBuilder<Map<String, dynamic>>(
+      future: _loadAccessContext(),
       builder: (context, snap) {
         if (snap.connectionState == ConnectionState.waiting) {
           return _loadingView();
         }
-
-        if (snap.data != true) {
+        if (!snap.hasData || snap.data!['isAdmin'] != true) {
           return _deniedView();
+        }
+
+        final managedStoreId = (snap.data!['storeId'] as String?)?.trim();
+        final managedStoreName = (snap.data!['storeName'] as String?)?.trim();
+        final managedStoreLocation =
+            (snap.data!['storeLocation'] as String?)?.trim();
+        if ((managedStoreId ?? '').isEmpty) {
+          return Scaffold(
+            appBar: AppBar(title: const Text('Store Admin Panel')),
+            body: const Center(
+              child: Padding(
+                padding: EdgeInsets.all(16),
+                child: Text(
+                  'No store is assigned to this admin account yet. Please ask Super Admin to assign your store first.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+            ),
+          );
         }
 
         return Scaffold(
           backgroundColor: const Color(0xFFF6F7FB),
           appBar: AppBar(
             title: const Text(
-              "Admin Panel",
+              "Store Admin Panel",
               style: TextStyle(fontWeight: FontWeight.w900),
             ),
             foregroundColor: Colors.white,
@@ -218,7 +284,94 @@ class _AdminPanelPageState extends State<AdminPanelPage>
               ),
             ),
           ),
-          body: TabBarView(controller: _tabController, children: _tabViews()),
+          body: Column(
+            children: [
+              Container(
+                width: double.infinity,
+                margin: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: const Color(0xFFDCE6F3)),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x14000000),
+                      blurRadius: 10,
+                      offset: Offset(0, 3),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFE3F2FD),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Icon(
+                        Icons.storefront_outlined,
+                        color: Color(0xFF1565C0),
+                        size: 20,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            managedStoreName ?? '-',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w900,
+                              fontSize: 16,
+                              color: Color(0xFF1F2937),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Row(
+                            children: [
+                              const Icon(
+                                Icons.location_on_outlined,
+                                size: 14,
+                                color: Colors.black54,
+                              ),
+                              const SizedBox(width: 4),
+                              Expanded(
+                                child: Text(
+                                  (managedStoreLocation ?? '').isEmpty
+                                      ? 'Location not set'
+                                      : managedStoreLocation!,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                    color: Colors.black54,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: TabBarView(
+                  controller: _tabController,
+                  children: _tabViews(
+                    managedStoreId: managedStoreId,
+                    managedStoreName: managedStoreName,
+                  ),
+                ),
+              ),
+            ],
+          ),
         );
       },
     );
@@ -230,53 +383,237 @@ class _AdminPanelPageState extends State<AdminPanelPage>
 class _DashboardTab extends StatelessWidget {
   final FirestoreService svc;
   final ValueChanged<int> onOpenTab;
+  final String? fixedStoreId;
 
-  const _DashboardTab({required this.svc, required this.onOpenTab});
+  const _DashboardTab({
+    required this.svc,
+    required this.onOpenTab,
+    this.fixedStoreId,
+  });
 
   Future<Map<String, dynamic>> _loadStats() async {
     final db = FirebaseFirestore.instance;
+    final cleanStoreId = (fixedStoreId ?? '').trim();
+    final cleanStoreIdLower = cleanStoreId.toLowerCase();
+    final scoped = cleanStoreId.isNotEmpty;
 
-    final storesSnap = await db.collection('stores').get();
-    final promosSnap = await db.collection('store_promotions').get();
-    final productsSnap = await db.collection('products').get();
-    final usersSnap = await db.collection('users').get();
-    final reviewsSnap = await db.collection('product_reviews').get();
-    final eventsSnap = await db.collection('events').get();
+    Future<List<QueryDocumentSnapshot<Map<String, dynamic>>>> safeQueryDocs(
+      Future<QuerySnapshot<Map<String, dynamic>>> Function() loader,
+    ) async {
+      try {
+        final snap = await loader();
+        return snap.docs;
+      } on FirebaseException catch (e) {
+        if (e.code == 'permission-denied' || e.code == 'failed-precondition') {
+          return const <QueryDocumentSnapshot<Map<String, dynamic>>>[];
+        }
+        rethrow;
+      }
+    }
+
+    final promosDocs = await safeQueryDocs(
+      () =>
+          scoped
+              ? db
+                  .collection('store_promotions')
+                  .where('storeId', isEqualTo: cleanStoreId)
+                  .get()
+              : db.collection('store_promotions').get(),
+    );
+    final productsDocs = await safeQueryDocs(() => db.collection('products').get());
+    final reviewsDocs = await safeQueryDocs(
+      () => db.collection('product_reviews').get(),
+    );
+    final eventsDocs = await safeQueryDocs(
+      () =>
+          scoped
+              ? db
+                  .collection('events')
+                  .where('storeId', isEqualTo: cleanStoreId)
+                  .get()
+              : db.collection('events').get(),
+    );
 
     int totalPriceEntries = 0;
-    for (final product in productsSnap.docs) {
-      final pricesSnap = await product.reference.collection('prices').get();
-      totalPriceEntries += pricesSnap.docs.length;
-    }
+    final scopedProductIds = <String>{};
+    final scopedPriceProductIds = <String>{};
+    if (scoped) {
+      final scopedPrices = await safeQueryDocs(
+        () =>
+            db
+                .collectionGroup('prices')
+                .where('storeId', isEqualTo: cleanStoreId)
+                .get(),
+      );
+      for (final priceDoc in scopedPrices) {
+        final pid = priceDoc.reference.parent.parent?.id ?? '';
+        if (pid.isNotEmpty) {
+          scopedPriceProductIds.add(pid);
+        }
+      }
 
-    int activePromotions = 0;
-    for (final doc in promosSnap.docs) {
-      if (doc.data()['isActive'] == true) {
-        activePromotions++;
+      if (scopedPriceProductIds.isEmpty) {
+        for (final product in productsDocs) {
+          try {
+            final snap =
+                await product.reference
+                    .collection('prices')
+                    .where('storeId', isEqualTo: cleanStoreId)
+                    .limit(1)
+                    .get();
+            if (snap.docs.isNotEmpty) {
+              scopedPriceProductIds.add(product.id);
+            }
+          } on FirebaseException catch (e) {
+            if (e.code == 'permission-denied' ||
+                e.code == 'failed-precondition') {
+              continue;
+            }
+            rethrow;
+          }
+        }
       }
     }
 
-    int activeEvents = 0;
-    for (final doc in eventsSnap.docs) {
-      if (doc.data()['active'] == true) {
-        activeEvents++;
+    int scopedProductCount = 0;
+    for (final product in productsDocs) {
+      final productStoreId =
+          (product.data()['storeId'] ?? '').toString().trim().toLowerCase();
+      final belongsByProduct = !scoped || productStoreId == cleanStoreIdLower;
+      final belongsByPrice =
+          scoped && scopedPriceProductIds.contains(product.id);
+      final belongsToStore = belongsByProduct || belongsByPrice;
+      if (!belongsToStore) continue;
+
+      if (scoped) {
+        scopedProductCount++;
+      }
+      scopedProductIds.add(product.id);
+      QuerySnapshot<Map<String, dynamic>> pricesSnap;
+      try {
+        pricesSnap = await product.reference.collection('prices').get();
+      } on FirebaseException catch (e) {
+        if (e.code == 'permission-denied' || e.code == 'failed-precondition') {
+          continue;
+        }
+        rethrow;
+      }
+      if (!scoped) {
+        totalPriceEntries += pricesSnap.docs.length;
+      } else {
+        totalPriceEntries +=
+            pricesSnap.docs.where((d) {
+              final data = d.data();
+              final priceStoreId =
+                  (data['storeId'] ?? d.id).toString().trim().toLowerCase();
+              return priceStoreId == cleanStoreIdLower;
+            }).length;
       }
     }
 
-    final sales = await svc.salesSummary();
+    int reviewCount = 0;
+    for (final review in reviewsDocs) {
+      if (!scoped) {
+        reviewCount++;
+        continue;
+      }
+      final data = review.data();
+      final reviewStoreId =
+          (data['storeId'] ?? '').toString().trim().toLowerCase();
+      final productId = (data['productId'] ?? '').toString().trim();
+      if (reviewStoreId == cleanStoreIdLower ||
+          scopedProductIds.contains(productId)) {
+        reviewCount++;
+      }
+    }
+
+    int orderCount = 0;
+    double revenue = 0.0;
+    if (!scoped) {
+      final sales = await svc.salesSummary();
+      orderCount = (sales['totalOrders'] ?? 0) as int;
+      revenue = ((sales['totalRevenue'] ?? 0.0) as num).toDouble();
+    } else {
+      List<QueryDocumentSnapshot<Map<String, dynamic>>> ordersDocs;
+      try {
+        final ordersSnap = await db.collectionGroup('orders').get();
+        ordersDocs = ordersSnap.docs;
+      } on FirebaseException catch (e) {
+        if (e.code == 'permission-denied' || e.code == 'failed-precondition') {
+          ordersDocs = const <QueryDocumentSnapshot<Map<String, dynamic>>>[];
+        } else {
+          rethrow;
+        }
+      }
+      for (final orderDoc in ordersDocs) {
+        final order = orderDoc.data();
+        final items = (order['items'] as List?) ?? const [];
+        final orderStoreId =
+            (order['storeId'] ?? '').toString().trim().toLowerCase();
+        bool hasThisStoreItem = false;
+        double thisStoreRevenue = 0.0;
+
+        for (final raw in items) {
+          if (raw is! Map) continue;
+          final item = Map<String, dynamic>.from(raw);
+          final itemStoreId =
+              (item['storeId'] ?? '').toString().trim().toLowerCase();
+          final itemProductId = (item['productId'] ?? '').toString().trim();
+          final belongsToStore =
+              itemStoreId == cleanStoreIdLower ||
+              (itemStoreId.isEmpty && scopedProductIds.contains(itemProductId));
+          if (!belongsToStore) continue;
+
+          int qty = 1;
+          final qtyRaw = item['qty'];
+          if (qtyRaw is int) qty = qtyRaw;
+          if (qtyRaw is num) qty = qtyRaw.toInt();
+          if (qty <= 0) qty = 1;
+
+          double lineTotal = 0.0;
+          final lt = item['lineTotal'];
+          if (lt is num) {
+            lineTotal = lt.toDouble();
+          } else {
+            final up = item['unitPrice'];
+            if (up is num) {
+              lineTotal = up.toDouble() * qty;
+            } else {
+              final orderTotal = order['total'];
+              if (orderTotal is num && items.isNotEmpty) {
+                lineTotal = orderTotal.toDouble() / items.length;
+              }
+            }
+          }
+
+          hasThisStoreItem = true;
+          thisStoreRevenue += lineTotal;
+        }
+
+        if (hasThisStoreItem) {
+          orderCount++;
+          revenue += thisStoreRevenue;
+          continue;
+        }
+
+        if (orderStoreId == cleanStoreIdLower) {
+          final total = order['total'];
+          if (total is num && total.toDouble() > 0) {
+            orderCount++;
+            revenue += total.toDouble();
+          }
+        }
+      }
+    }
 
     return {
-      'stores': storesSnap.docs.length,
-      'promotions': promosSnap.docs.length,
-      'activePromotions': activePromotions,
-      'products': productsSnap.docs.length,
+      'promotions': promosDocs.length,
+      'products': scoped ? scopedProductCount : productsDocs.length,
       'prices': totalPriceEntries,
-      'users': usersSnap.docs.length,
-      'orders': (sales['totalOrders'] ?? 0) as int,
-      'reviews': reviewsSnap.docs.length,
-      'events': eventsSnap.docs.length,
-      'activeEvents': activeEvents,
-      'revenue': (sales['totalRevenue'] ?? 0.0) as double,
+      'reviews': reviewCount,
+      'events': eventsDocs.length,
+      'orders': orderCount,
+      'revenue': revenue,
     };
   }
 
@@ -312,88 +649,80 @@ class _DashboardTab extends StatelessWidget {
             padding: const EdgeInsets.all(14),
             children: [
               const Text(
-                'Overall Dashboard',
+                'Overview Dashboard',
                 style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900),
               ),
               const SizedBox(height: 6),
               const Text(
-                'Tap a card to open the related page.',
-                style: TextStyle(
-                  color: Colors.black54,
-                  fontWeight: FontWeight.w600,
-                ),
+                'Tap a card to open its related admin tab.',
+                style: TextStyle(color: Colors.black54),
               ),
               const SizedBox(height: 14),
-              GridView.count(
-                crossAxisCount: 2,
-                crossAxisSpacing: 12,
-                mainAxisSpacing: 12,
-                childAspectRatio: 1.25,
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
+              Wrap(
+                spacing: 10,
+                runSpacing: 10,
                 children: [
-                  _DashboardCard(
-                    title: 'STORES',
-                    value: '${s['stores']}',
-                    icon: Icons.storefront_outlined,
-                    iconColor: const Color(0xFF00BCD4),
-                    onTap: () => onOpenTab(1),
+                  SizedBox(
+                    width: 165,
+                    height: 148,
+                    child: _DashboardCard(
+                      title: 'PROMOTIONS',
+                      value: '${s['promotions']}',
+                      icon: Icons.campaign_outlined,
+                      iconColor: const Color(0xFFE91E63),
+                      onTap: () => onOpenTab(1),
+                    ),
                   ),
-                  _DashboardCard(
-                    title: 'PROMOTIONS',
-                    value: '${s['promotions']}',
-                    icon: Icons.campaign_outlined,
-                    iconColor: const Color(0xFFE91E63),
-                    onTap: () => onOpenTab(2),
+                  SizedBox(
+                    width: 165,
+                    height: 148,
+                    child: _DashboardCard(
+                      title: 'PRODUCTS',
+                      value: '${s['products']}',
+                      icon: Icons.inventory_2_outlined,
+                      iconColor: const Color(0xFF2196F3),
+                      onTap: () => onOpenTab(2),
+                    ),
                   ),
-                  _DashboardCard(
-                    title: 'PRODUCTS',
-                    value: '${s['products']}',
-                    icon: Icons.inventory_2_outlined,
-                    iconColor: const Color(0xFF2196F3),
-                    onTap: () => onOpenTab(3),
+                  SizedBox(
+                    width: 165,
+                    height: 148,
+                    child: _DashboardCard(
+                      title: 'PRICES',
+                      value: '${s['prices']}',
+                      icon: Icons.attach_money_outlined,
+                      iconColor: const Color(0xFF4CAF50),
+                      onTap: () => onOpenTab(3),
+                    ),
                   ),
-                  _DashboardCard(
-                    title: 'PRICES',
-                    value: '${s['prices']}',
-                    icon: Icons.attach_money_outlined,
-                    iconColor: const Color(0xFF4CAF50),
-                    onTap: () => onOpenTab(4),
+                  SizedBox(
+                    width: 165,
+                    height: 148,
+                    child: _DashboardCard(
+                      title: 'REVIEWS',
+                      value: '${s['reviews']}',
+                      icon: Icons.rate_review_outlined,
+                      iconColor: const Color(0xFFFF9800),
+                      onTap: () => onOpenTab(4),
+                    ),
                   ),
-                  _DashboardCard(
-                    title: 'USERS',
-                    value: '${s['users']}',
-                    icon: Icons.people_alt_outlined,
-                    iconColor: const Color(0xFF7E57C2),
-                    onTap: () => onOpenTab(5),
-                  ),
-                  _DashboardCard(
-                    title: 'ORDERS',
-                    value: '${s['orders']}',
-                    icon: Icons.receipt_long_outlined,
-                    iconColor: const Color(0xFF3F51B5),
-                    onTap: () => onOpenTab(6),
-                  ),
-                  _DashboardCard(
-                    title: 'REVIEWS',
-                    value: '${s['reviews']}',
-                    icon: Icons.rate_review_outlined,
-                    iconColor: const Color(0xFFFF9800),
-                    onTap: () => onOpenTab(7),
-                  ),
-                  _DashboardCard(
-                    title: 'EVENTS',
-                    value: '${s['events']}',
-                    icon: Icons.event_note_outlined,
-                    iconColor: const Color(0xFF009688),
-                    onTap: () => onOpenTab(8),
+                  SizedBox(
+                    width: 165,
+                    height: 148,
+                    child: _DashboardCard(
+                      title: 'EVENTS',
+                      value: '${s['events']}',
+                      icon: Icons.event_note_outlined,
+                      iconColor: const Color(0xFF009688),
+                      onTap: () => onOpenTab(5),
+                    ),
                   ),
                 ],
               ),
               const SizedBox(height: 14),
               _RevenueCard(
                 revenue: (s['revenue'] as double),
-                onTap: () => onOpenTab(9),
+                onTap: () => onOpenTab(6),
               ),
             ],
           ),
@@ -791,6 +1120,32 @@ class _StoresTab extends StatelessWidget {
     );
     bool enabled = (data?['enabled'] ?? true) == true;
     bool saving = false;
+    String selectedAdminUid = (data?['adminUid'] ?? '').toString().trim();
+    String selectedAdminEmail = (data?['adminEmail'] ?? '').toString().trim();
+    String selectedAdminName = (data?['adminName'] ?? '').toString().trim();
+
+    final usersSnap =
+        await FirebaseFirestore.instance
+            .collection('users')
+            .orderBy('email')
+            .get();
+    if (!context.mounted) return;
+
+    final candidates =
+        usersSnap.docs.where((d) {
+          final role = (d.data()['role'] ?? 'user').toString().trim();
+          return role != 'delivery';
+        }).toList();
+
+    if (candidates.isNotEmpty && selectedAdminUid.isEmpty) {
+      final first = candidates.first;
+      selectedAdminUid = first.id;
+      selectedAdminEmail = (first.data()['email'] ?? '').toString().trim();
+      selectedAdminName =
+          (first.data()['name'] ?? first.data()['displayName'] ?? '')
+              .toString()
+              .trim();
+    }
 
     await showDialog(
       context: context,
@@ -816,6 +1171,55 @@ class _StoresTab extends StatelessWidget {
                           label: 'Store Name',
                           prefixIcon: Icons.storefront_outlined,
                         ),
+                      ),
+                      const SizedBox(height: 12),
+                      DropdownButtonFormField<String>(
+                        value:
+                            selectedAdminUid.isEmpty ? null : selectedAdminUid,
+                        decoration: _adminInputDecoration(
+                          label: 'Store Admin',
+                          prefixIcon: Icons.person_outline,
+                        ),
+                        items:
+                            candidates
+                                .map(
+                                  (doc) => DropdownMenuItem<String>(
+                                    value: doc.id,
+                                    child: Text(
+                                      ((doc.data()['name'] ??
+                                              doc.data()['displayName'] ??
+                                              doc.data()['email'] ??
+                                              doc.id))
+                                          .toString(),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                )
+                                .toList(),
+                        validator: (v) {
+                          if (v == null || v.trim().isEmpty) {
+                            return 'Store admin is required.';
+                          }
+                          return null;
+                        },
+                        onChanged: (v) {
+                          setDialogState(() {
+                            selectedAdminUid = (v ?? '').trim();
+                            final picked = candidates.firstWhere(
+                              (doc) => doc.id == selectedAdminUid,
+                            );
+                            selectedAdminEmail =
+                                (picked.data()['email'] ?? '')
+                                    .toString()
+                                    .trim();
+                            selectedAdminName =
+                                (picked.data()['name'] ??
+                                        picked.data()['displayName'] ??
+                                        '')
+                                    .toString()
+                                    .trim();
+                          });
+                        },
                       ),
                       const SizedBox(height: 12),
                       SwitchListTile(
@@ -851,6 +1255,9 @@ class _StoresTab extends StatelessWidget {
                                 storeId: id,
                                 name: nameCtrl.text.trim(),
                                 enabled: enabled,
+                                adminUid: selectedAdminUid,
+                                adminEmail: selectedAdminEmail,
+                                adminName: selectedAdminName,
                               );
                               if (context.mounted) {
                                 Navigator.of(dialogContext).pop();
@@ -892,7 +1299,18 @@ class _StoresTab extends StatelessWidget {
         if (!snap.hasData) {
           return const Center(child: CircularProgressIndicator());
         }
-        final docs = snap.data!.docs;
+        final docs =
+            snap.data!.docs.toList()..sort((a, b) {
+              DateTime asDate(Object? v) {
+                if (v is Timestamp) return v.toDate();
+                if (v is DateTime) return v;
+                return DateTime.fromMillisecondsSinceEpoch(0);
+              }
+
+              final ad = asDate(a.data()['endAt']);
+              final bd = asDate(b.data()['endAt']);
+              return ad.compareTo(bd);
+            });
 
         return Padding(
           padding: const EdgeInsets.all(14),
@@ -1007,7 +1425,9 @@ class _StoresTab extends StatelessWidget {
 
 class _PromosTab extends StatelessWidget {
   final FirestoreService svc;
-  const _PromosTab({required this.svc});
+  final String? fixedStoreId;
+  final String? fixedStoreName;
+  const _PromosTab({required this.svc, this.fixedStoreId, this.fixedStoreName});
 
   Future<bool> _confirm(
     BuildContext context,
@@ -1099,8 +1519,8 @@ class _PromosTab extends StatelessWidget {
     bool active = (data?['isActive'] ?? true) == true;
     bool saving = false;
 
-    String storeId = (data?['storeId'] ?? '').toString();
-    String storeName = (data?['storeName'] ?? '').toString();
+    String storeId = (fixedStoreId ?? data?['storeId'] ?? '').toString();
+    String storeName = (fixedStoreName ?? data?['storeName'] ?? '').toString();
     DateTime endAt =
         (data?['endAt'] is Timestamp)
             ? (data!['endAt'] as Timestamp).toDate()
@@ -1136,27 +1556,40 @@ class _PromosTab extends StatelessWidget {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      DropdownButtonFormField<String>(
-                        value: storeId.isEmpty ? null : storeId,
-                        decoration: _adminInputDecoration(
-                          label: 'Store',
-                          prefixIcon: Icons.storefront_outlined,
+                      if ((fixedStoreId ?? '').trim().isEmpty) ...[
+                        DropdownButtonFormField<String>(
+                          value: storeId.isEmpty ? null : storeId,
+                          decoration: _adminInputDecoration(
+                            label: 'Store',
+                            prefixIcon: Icons.storefront_outlined,
+                          ),
+                          items: _storeItems(stores),
+                          validator:
+                              (v) =>
+                                  v == null || v.isEmpty
+                                      ? 'Store is required.'
+                                      : null,
+                          onChanged: (v) {
+                            setDialogState(() {
+                              storeId = v ?? '';
+                              final found = _storeById(stores, storeId);
+                              storeName = found['name'].toString();
+                            });
+                          },
                         ),
-                        items: _storeItems(stores),
-                        validator:
-                            (v) =>
-                                v == null || v.isEmpty
-                                    ? 'Store is required.'
-                                    : null,
-                        onChanged: (v) {
-                          setDialogState(() {
-                            storeId = v ?? '';
-                            final found = _storeById(stores, storeId);
-                            storeName = found['name'].toString();
-                          });
-                        },
-                      ),
-                      const SizedBox(height: 12),
+                        const SizedBox(height: 12),
+                      ] else ...[
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(12),
+                          decoration: _adminCardDecoration(),
+                          child: Text(
+                            'Store: $storeName',
+                            style: const TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                      ],
                       TextFormField(
                         controller: titleCtrl,
                         validator: (v) => _validateRequired(v, 'Title'),
@@ -1299,7 +1732,7 @@ class _PromosTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: svc.promosStream(storeId: 'all'),
+      stream: svc.promosStream(storeId: fixedStoreId ?? 'all'),
       builder: (context, snap) {
         if (snap.hasError) return _streamError(snap.error);
         if (!snap.hasData) {
@@ -1417,7 +1850,13 @@ class _PromosTab extends StatelessWidget {
 
 class _ProductsTab extends StatefulWidget {
   final FirestoreService svc;
-  const _ProductsTab({required this.svc});
+  final String? fixedStoreId;
+  final String? fixedStoreName;
+  const _ProductsTab({
+    required this.svc,
+    this.fixedStoreId,
+    this.fixedStoreName,
+  });
 
   @override
   State<_ProductsTab> createState() => _ProductsTabState();
@@ -1435,6 +1874,7 @@ class _ProductsTabState extends State<_ProductsTab> {
   ];
 
   final _search = TextEditingController();
+  String _categoryFilter = 'all';
 
   bool _isHttpImageUrl(String? raw) {
     if (raw == null || raw.trim().isEmpty) return false;
@@ -1789,6 +2229,8 @@ class _ProductsTabState extends State<_ProductsTab> {
                                 quantity: int.parse(qtyCtrl.text.trim()),
                                 description: descCtrl.text.trim(),
                                 imageUrl: imageCtrl.text.trim(),
+                                storeId: widget.fixedStoreId,
+                                storeName: widget.fixedStoreName,
                               );
                               if (context.mounted) {
                                 Navigator.of(dialogContext).pop();
@@ -1828,7 +2270,10 @@ class _ProductsTabState extends State<_ProductsTab> {
       child: Column(
         children: [
           StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-            stream: widget.svc.productsStream(search: ''),
+            stream: widget.svc.productsStream(
+              search: '',
+              storeId: widget.fixedStoreId,
+            ),
             builder: (context, countSnap) {
               final total = countSnap.data?.docs.length ?? 0;
               return _SectionCountHeader(
@@ -1851,6 +2296,51 @@ class _ProductsTabState extends State<_ProductsTab> {
             },
           ),
           const SizedBox(height: 10),
+          StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+            stream: widget.svc.productsStream(
+              search: '',
+              storeId: widget.fixedStoreId,
+            ),
+            builder: (context, categorySnap) {
+              final categorySet = <String>{'all'};
+              final docs = categorySnap.data?.docs ?? const [];
+              for (final d in docs) {
+                final raw = (d.data()['category'] ?? '').toString().trim();
+                categorySet.add(raw.isEmpty ? 'Uncategorized' : raw);
+              }
+              if (_categoryFilter.trim().isNotEmpty) {
+                categorySet.add(_categoryFilter);
+              }
+              final categories =
+                  categorySet.toList()..sort((a, b) {
+                    if (a == 'all') return -1;
+                    if (b == 'all') return 1;
+                    return a.toLowerCase().compareTo(b.toLowerCase());
+                  });
+
+              return DropdownButtonFormField<String>(
+                value: _categoryFilter,
+                decoration: _adminInputDecoration(
+                  label: 'Filter by Category',
+                  prefixIcon: Icons.category_outlined,
+                ),
+                items:
+                    categories
+                        .map(
+                          (c) => DropdownMenuItem<String>(
+                            value: c,
+                            child: Text(c == 'all' ? 'All Categories' : c),
+                          ),
+                        )
+                        .toList(),
+                onChanged: (v) {
+                  if (v == null) return;
+                  setState(() => _categoryFilter = v);
+                },
+              );
+            },
+          ),
+          const SizedBox(height: 10),
           SizedBox(
             width: double.infinity,
             child: ElevatedButton.icon(
@@ -1865,18 +2355,40 @@ class _ProductsTabState extends State<_ProductsTab> {
           const SizedBox(height: 12),
           Expanded(
             child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-              stream: widget.svc.productsStream(search: _search.text),
+              stream: widget.svc.productsStream(
+                search: _search.text,
+                storeId: widget.fixedStoreId,
+              ),
               builder: (context, snap) {
                 if (snap.hasError) return _streamError(snap.error);
                 if (!snap.hasData) {
                   return const Center(child: CircularProgressIndicator());
                 }
-                final docs = snap.data!.docs;
+                var docs = snap.data!.docs.toList();
+                final rawSearch = _search.text.trim().toLowerCase();
+                if (rawSearch.isNotEmpty) {
+                  docs =
+                      docs.where((d) {
+                        final name =
+                            (d.data()['name'] ?? '').toString().toLowerCase();
+                        return name.contains(rawSearch);
+                      }).toList();
+                }
+
+                if (_categoryFilter != 'all') {
+                  docs =
+                      docs.where((d) {
+                        final raw =
+                            (d.data()['category'] ?? '').toString().trim();
+                        final cat = raw.isEmpty ? 'Uncategorized' : raw;
+                        return cat == _categoryFilter;
+                      }).toList();
+                }
 
                 if (docs.isEmpty) {
                   return Center(
                     child: Text(
-                      _search.text.trim().isEmpty
+                      _search.text.trim().isEmpty && _categoryFilter == 'all'
                           ? 'No products yet'
                           : 'No products found',
                       style: const TextStyle(fontWeight: FontWeight.w800),
@@ -1917,7 +2429,9 @@ class _ProductsTabState extends State<_ProductsTab> {
                               (p['name'] ?? '').toString(),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontWeight: FontWeight.w900),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w900,
+                              ),
                             ),
                             const SizedBox(height: 2),
                             Text(
@@ -1987,7 +2501,9 @@ class _ProductsTabState extends State<_ProductsTab> {
 
 class _PricesTab extends StatefulWidget {
   final FirestoreService svc;
-  const _PricesTab({required this.svc});
+  final String? fixedStoreId;
+  final String? fixedStoreName;
+  const _PricesTab({required this.svc, this.fixedStoreId, this.fixedStoreName});
 
   @override
   State<_PricesTab> createState() => _PricesTabState();
@@ -2048,11 +2564,7 @@ class _PricesTabState extends State<_PricesTab> {
       items.add(
         DropdownMenuItem<String>(
           value: product.id,
-          child: Text(
-            name,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
+          child: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
         ),
       );
     }
@@ -2156,27 +2668,40 @@ class _PricesTabState extends State<_PricesTab> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      DropdownButtonFormField<String>(
-                        value: storeId.isEmpty ? null : storeId,
-                        decoration: _adminInputDecoration(
-                          label: 'Store',
-                          prefixIcon: Icons.storefront_outlined,
+                      if ((widget.fixedStoreId ?? '').trim().isEmpty) ...[
+                        DropdownButtonFormField<String>(
+                          value: storeId.isEmpty ? null : storeId,
+                          decoration: _adminInputDecoration(
+                            label: 'Store',
+                            prefixIcon: Icons.storefront_outlined,
+                          ),
+                          items: _storeItems(stores),
+                          validator:
+                              (v) =>
+                                  v == null || v.isEmpty
+                                      ? 'Store is required.'
+                                      : null,
+                          onChanged: (v) {
+                            setDialogState(() {
+                              storeId = v ?? storeId;
+                              final found = _storeById(stores, storeId);
+                              storeName = found['name'].toString();
+                            });
+                          },
                         ),
-                        items: _storeItems(stores),
-                        validator:
-                            (v) =>
-                                v == null || v.isEmpty
-                                    ? 'Store is required.'
-                                    : null,
-                        onChanged: (v) {
-                          setDialogState(() {
-                            storeId = v ?? storeId;
-                            final found = _storeById(stores, storeId);
-                            storeName = found['name'].toString();
-                          });
-                        },
-                      ),
-                      const SizedBox(height: 12),
+                        const SizedBox(height: 12),
+                      ] else ...[
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(12),
+                          decoration: _adminCardDecoration(),
+                          child: Text(
+                            'Store: $storeName',
+                            style: const TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                      ],
                       TextFormField(
                         controller: priceCtrl,
                         keyboardType: const TextInputType.numberWithOptions(
@@ -2270,7 +2795,10 @@ class _PricesTabState extends State<_PricesTab> {
     return Padding(
       padding: const EdgeInsets.all(14),
       child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-        stream: widget.svc.productsStream(search: ''),
+        stream: widget.svc.productsStream(
+          search: '',
+          storeId: widget.fixedStoreId,
+        ),
         builder: (context, productSnap) {
           if (productSnap.hasError) return _streamError(productSnap.error);
           if (!productSnap.hasData) {
@@ -2300,7 +2828,10 @@ class _PricesTabState extends State<_PricesTab> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                stream: widget.svc.pricesStream(_selectedProductId!),
+                stream: widget.svc.pricesStream(
+                  _selectedProductId!,
+                  storeId: widget.fixedStoreId,
+                ),
                 builder: (context, priceSnap) {
                   final count = priceSnap.data?.docs.length ?? 0;
                   return _SectionCountHeader(
@@ -2367,7 +2898,10 @@ class _PricesTabState extends State<_PricesTab> {
                           ),
                         )
                         : StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                          stream: widget.svc.pricesStream(_selectedProductId!),
+                          stream: widget.svc.pricesStream(
+                            _selectedProductId!,
+                            storeId: widget.fixedStoreId,
+                          ),
                           builder: (context, snap) {
                             if (snap.hasError) return _streamError(snap.error);
                             if (!snap.hasData) {

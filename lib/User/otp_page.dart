@@ -75,7 +75,7 @@ class _OtpPageState extends State<OtpPage> {
       if (!mounted) return;
       _showSnack('OTP verified');
 
-      await AuthRouter.goAfterLogin(context);
+      await AuthRouterGate.goAfterLogin(context);
     } on FirebaseAuthException catch (e) {
       final msg = e.message ?? 'OTP verification failed.';
       _showSnack(msg);
@@ -122,13 +122,13 @@ class _OtpPageState extends State<OtpPage> {
                 style: ElevatedButton.styleFrom(backgroundColor: kOrange),
                 onPressed: _loading ? null : _verifyOtp,
                 child:
-                    _loading
-                        ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                        : const Text('Verify'),
+                _loading
+                    ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+                    : const Text('Verify'),
               ),
             ),
           ],

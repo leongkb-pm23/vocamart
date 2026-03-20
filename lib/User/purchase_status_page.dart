@@ -10,6 +10,7 @@ import 'package:intl/intl.dart';
 
 import 'package:fyp/components/app_store.dart';
 import 'package:fyp/components/order_page_widgets.dart';
+import 'package:fyp/User/order_review_page.dart';
 import 'package:fyp/User/order_invoice_pdf.dart';
 
 // This class defines PurchaseStatusPage, used for this page/feature.
@@ -37,13 +38,19 @@ class PurchaseStatusPage extends StatelessWidget {
 
   bool _isToReceiveStatus(String raw) {
     final s = _normalizeStatus(raw);
-    return s == 'to receive' || s == 'shipping';
+    return s == 'to receive' ||
+        s == 'shipping' ||
+        s == 'on the way' ||
+        s == 'delivered' ||
+        s == 'completed';
   }
 
   Color _statusColor(String raw) {
     final s = _normalizeStatus(raw);
     if (s == 'completed' || s == 'delivered') return const Color(0xFF2E7D32);
-    if (s == 'shipping' || s == 'to receive') return const Color(0xFF1565C0);
+    if (s == 'shipping' || s == 'to receive' || s == 'on the way') {
+      return const Color(0xFF1565C0);
+    }
     if (s == 'cancelled') return const Color(0xFFC62828);
     return _orange;
   }
@@ -55,10 +62,21 @@ class PurchaseStatusPage extends StatelessWidget {
     if (s == 'to receive') return 'TO RECEIVE';
     if (s == 'processing') return 'PROCESSING';
     if (s == 'shipping') return 'SHIPPING';
+    if (s == 'on the way') return 'ON THE WAY';
     if (s == 'assigned') return 'ASSIGNED';
     if (s == 'pending') return 'PENDING';
     if (s == 'delivered') return 'DELIVERED';
     if (s == 'completed') return 'COMPLETED';
+    if (s == 'cancelled') return 'CANCELLED';
+    return raw.toUpperCase();
+  }
+
+  String _displayDeliveryStatus(String raw) {
+    final s = _normalizeStatus(raw);
+    if (s.isEmpty) return '';
+    if (s == 'on the way') return 'ON THE WAY';
+    if (s == 'assigned') return 'ASSIGNED';
+    if (s == 'delivered') return 'DELIVERED';
     if (s == 'cancelled') return 'CANCELLED';
     return raw.toUpperCase();
   }
@@ -69,6 +87,20 @@ class PurchaseStatusPage extends StatelessWidget {
       total += item.qty > 0 ? item.qty : 1;
     }
     return total;
+  }
+
+  bool _canUserCancelOrder(OrderItem order) {
+    final s = _normalizeStatus(order.status);
+    if (s == 'cancelled' || s == 'completed' || s == 'delivered') {
+      return false;
+    }
+    return true;
+  }
+
+  bool _canReviewOrder(OrderItem order) {
+    final s = _normalizeStatus(order.status);
+    final d = _normalizeStatus(order.deliveryStatus);
+    return s == 'completed' || s == 'delivered' || d == 'delivered';
   }
 
   Widget _orderCard(BuildContext context, OrderItem order) {
@@ -84,6 +116,7 @@ class PurchaseStatusPage extends StatelessWidget {
     final dateText = DateFormat('dd MMM yyyy, hh:mm a').format(order.createdAt);
     final statusText = _displayStatus(order.status);
     final statusColor = _statusColor(order.status);
+    final deliveryStatusText = _displayDeliveryStatus(order.deliveryStatus);
     final quantity = _orderQuantity(order);
 
     return OrderInfoCard(
@@ -202,23 +235,102 @@ class PurchaseStatusPage extends StatelessWidget {
         ],
         if (order.voucherCode.trim().isNotEmpty)
           Text('Voucher: ${order.voucherCode}'),
+        if (deliveryStatusText.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Text(
+            'Delivery: $deliveryStatusText',
+            style: const TextStyle(fontWeight: FontWeight.w800),
+          ),
+        ],
         const SizedBox(height: 8),
-        const Text(
-          'Status updates are handled by system/admin.',
-          style: TextStyle(
+        Text(
+          _canUserCancelOrder(order)
+              ? 'You can cancel this order before completion. Refund goes to wallet.'
+              : 'Status updates are handled by system/admin.',
+          style: const TextStyle(
             fontSize: 12,
             color: Colors.black54,
             fontWeight: FontWeight.w700,
           ),
         ),
         const SizedBox(height: 10),
-        Align(
-          alignment: Alignment.centerRight,
-          child: OutlinedButton.icon(
-            onPressed: () => OrderInvoicePdf.preview(context, order),
-            icon: const Icon(Icons.picture_as_pdf_outlined),
-            label: const Text('Invoice PDF'),
-          ),
+        Wrap(
+          alignment: WrapAlignment.end,
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            if (_canUserCancelOrder(order))
+              OutlinedButton.icon(
+                onPressed: () async {
+                  final confirm =
+                      await showDialog<bool>(
+                        context: context,
+                        builder:
+                            (_) => AlertDialog(
+                              title: const Text('Cancel Order'),
+                              content: const Text(
+                                'Cancel this order? If payment was completed, the amount will be refunded to your wallet.',
+                              ),
+                              actions: [
+                                TextButton(
+                                  onPressed:
+                                      () => Navigator.pop(context, false),
+                                  child: const Text('No'),
+                                ),
+                                ElevatedButton(
+                                  onPressed: () => Navigator.pop(context, true),
+                                  child: const Text('Yes, Cancel'),
+                                ),
+                              ],
+                            ),
+                      ) ??
+                      false;
+                  if (!confirm) return;
+
+                  try {
+                    final refunded = await store.cancelOrderWithRefund(
+                      order.id,
+                    );
+                    if (!context.mounted) return;
+                    final msg =
+                        refunded
+                            ? 'Order cancelled. Refund added to wallet.'
+                            : 'Order cancelled.';
+                    ScaffoldMessenger.of(
+                      context,
+                    ).showSnackBar(SnackBar(content: Text(msg)));
+                  } catch (e) {
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Cannot cancel order: $e')),
+                    );
+                  }
+                },
+                icon: const Icon(Icons.cancel_outlined),
+                label: const Text('Cancel Order'),
+              ),
+            if (_canReviewOrder(order))
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _orange,
+                  foregroundColor: Colors.black,
+                ),
+                onPressed:
+                    () => Navigator.push(
+                      context,
+                      MaterialPageRoute<void>(
+                        builder: (_) => OrderReviewPage(order: order),
+                      ),
+                    ),
+                icon: const Icon(Icons.rate_review_outlined),
+                label: const Text('Review Products'),
+              ),
+            OutlinedButton.icon(
+              onPressed: () => OrderInvoicePdf.preview(context, order),
+              icon: const Icon(Icons.picture_as_pdf_outlined),
+              label: const Text('Invoice PDF'),
+            ),
+          ],
         ),
       ],
     );

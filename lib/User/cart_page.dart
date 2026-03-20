@@ -37,6 +37,8 @@ class _CheckoutAddress {
   });
 }
 
+enum _CheckoutPaymentMode { card, wallet, billplz }
+
 // This class defines CartPage, used for this page/feature.
 class CartPage extends StatefulWidget {
   static const kOrange = Color(0xFFFF6A00);
@@ -143,6 +145,7 @@ class _CartPageState extends State<CartPage> {
 
   String? _selectedAddressId;
   String? _selectedPaymentId;
+  _CheckoutPaymentMode _selectedPaymentMode = _CheckoutPaymentMode.card;
   String _selectedAddressPreview = '';
   final BillplzPaymentService _billplz = BillplzPaymentService();
 
@@ -722,43 +725,121 @@ class _CartPageState extends State<CartPage> {
       );
     }
 
-    if (store.payments.isEmpty) {
-      _showSnack(context, 'Please add a payment card before checkout.');
-      await _openCardDetail(context);
-      return;
-    }
-
-    final method = _selectedPaymentMethod(store);
-    if (method == null) {
-      _showSnack(context, 'Please select a payment card.');
-      return;
-    }
-
-    final ok = await _verifyPayment(context, method);
-    if (!context.mounted) return;
-    if (!ok) {
-      _showSnack(context, 'Payment verification failed');
-      return;
-    }
-
     final user = FirebaseAuth.instance.currentUser;
     final email = (user?.email ?? '').trim();
     final mobile = (user?.phoneNumber ?? '').trim();
     final preOrderId = 'PRE-${DateTime.now().millisecondsSinceEpoch}';
     final fallbackEmail = 'order-${preOrderId.toLowerCase()}@vocamart.local';
-    final contactEmail = email.isNotEmpty ? email : (mobile.isEmpty ? fallbackEmail : '');
-    final customerName = user?.displayName?.trim().isNotEmpty == true
-        ? user!.displayName!.trim()
-        : 'Customer';
-    final amountToPay = store.payableTotal + store.estimateDeliveryFee(
-      deliveryAddress: deliveryAddress,
-    );
+    final contactEmail =
+        email.isNotEmpty ? email : (mobile.isEmpty ? fallbackEmail : '');
+    final customerName =
+        user?.displayName?.trim().isNotEmpty == true
+            ? user!.displayName!.trim()
+            : 'Customer';
+    final amountToPay =
+        store.payableTotal +
+        store.estimateDeliveryFee(deliveryAddress: deliveryAddress);
     if (amountToPay <= 0) {
       _showSnack(context, 'Invalid checkout total.');
       return;
     }
 
-    _showSnack(context, 'Card verified. Creating Billplz payment...');
+    if (_selectedPaymentMode == _CheckoutPaymentMode.card) {
+      if (store.payments.isEmpty) {
+        _showSnack(context, 'Please add a payment card before checkout.');
+        await _openCardDetail(context);
+        return;
+      }
+
+      final method = _selectedPaymentMethod(store);
+      if (method == null) {
+        _showSnack(context, 'Please select a payment card.');
+        return;
+      }
+
+      final ok = await _verifyPayment(context, method);
+      if (!context.mounted) return;
+      if (!ok) {
+        _showSnack(context, 'Payment verification failed');
+        return;
+      }
+
+      OrderItem? finalOrder;
+      try {
+        finalOrder = await store.checkout(
+          paymentMethod: method,
+          deliveryAddressOverride: deliveryAddress,
+        );
+      } on StateError catch (e) {
+        if (!context.mounted) return;
+        _showSnack(context, e.message);
+        return;
+      } on FirebaseException catch (e) {
+        if (!context.mounted) return;
+        _showSnack(context, 'Checkout failed: ${e.message ?? e.code}');
+        return;
+      } catch (e) {
+        if (!context.mounted) return;
+        _showSnack(context, 'Checkout failed: $e');
+        return;
+      }
+      if (finalOrder == null || !context.mounted) return;
+
+      await store.updateOrderPayment(
+        orderId: finalOrder.id,
+        paymentStatus: 'paid',
+        paymentGateway: 'card',
+      );
+      await store.updateOrderStatus(finalOrder.id, 'To Ship');
+      if (!context.mounted) return;
+      _showSnack(
+        context,
+        'Card payment successful for order ${finalOrder.id}.',
+      );
+      Navigator.pushNamedAndRemoveUntil(context, '/home', (route) => false);
+      return;
+    }
+
+    if (_selectedPaymentMode == _CheckoutPaymentMode.wallet) {
+      if (store.walletBalance + 0.0001 < amountToPay) {
+        _showSnack(
+          context,
+          'Insufficient wallet balance. Current RM ${store.walletBalance.toStringAsFixed(2)}, need RM ${amountToPay.toStringAsFixed(2)}.',
+        );
+        return;
+      }
+
+      OrderItem? finalOrder;
+      try {
+        finalOrder = await store.checkoutWithWallet(
+          deliveryAddressOverride: deliveryAddress,
+        );
+      } on StateError catch (e) {
+        if (!context.mounted) return;
+        _showSnack(context, e.message);
+        return;
+      } on FirebaseException catch (e) {
+        if (!context.mounted) return;
+        _showSnack(context, 'Checkout failed: ${e.message ?? e.code}');
+        return;
+      } catch (e) {
+        if (!context.mounted) return;
+        _showSnack(context, 'Checkout failed: $e');
+        return;
+      }
+      if (finalOrder == null || !context.mounted) return;
+
+      await store.updateOrderStatus(finalOrder.id, 'To Ship');
+      if (!context.mounted) return;
+      _showSnack(
+        context,
+        'Digital wallet payment successful for order ${finalOrder.id}.',
+      );
+      Navigator.pushNamedAndRemoveUntil(context, '/home', (route) => false);
+      return;
+    }
+
+    _showSnack(context, 'Creating Billplz payment...');
 
     final backendOk = await _billplz.healthCheck();
     if (!context.mounted) return;
@@ -840,7 +921,9 @@ class _CartPageState extends State<CartPage> {
             actions: [
               TextButton(
                 onPressed: () async {
-                  await Clipboard.setData(ClipboardData(text: created.billUrl!));
+                  await Clipboard.setData(
+                    ClipboardData(text: created.billUrl!),
+                  );
                   if (!dCtx.mounted) return;
                   ScaffoldMessenger.of(dCtx).showSnackBar(
                     const SnackBar(content: Text('Billplz link copied.')),
@@ -887,9 +970,12 @@ class _CartPageState extends State<CartPage> {
 
       final paid = latest.paid == true;
       final state = (latest.state ?? '').toLowerCase();
-      final paymentStatus = paid
-          ? 'paid'
-          : (state == 'expired' || state == 'cancelled' || state == 'failed')
+      final paymentStatus =
+          paid
+              ? 'paid'
+              : (state == 'expired' ||
+                  state == 'cancelled' ||
+                  state == 'failed')
               ? 'failed'
               : 'pending';
 
@@ -897,7 +983,7 @@ class _CartPageState extends State<CartPage> {
         OrderItem? finalOrder;
         try {
           finalOrder = await store.checkout(
-            paymentMethod: method,
+            paymentMethod: null,
             deliveryAddressOverride: deliveryAddress,
           );
         } on StateError catch (e) {
@@ -918,6 +1004,7 @@ class _CartPageState extends State<CartPage> {
         await store.updateOrderPayment(
           orderId: finalOrder.id,
           paymentStatus: 'paid',
+          paymentGateway: 'billplz',
           billId: created.billId,
           billUrl: created.billUrl,
           billState: latest.state ?? created.state,
@@ -1234,57 +1321,68 @@ class _CartPageState extends State<CartPage> {
                                                   isGuestUser
                                                       ? null
                                                       : () async {
-                                                final value =
-                                                    await _editAddressDialog(
-                                                      context,
-                                                    );
-                                                if (value == null) return;
-                                                final label =
-                                                    (value['label'] ?? '')
-                                                        .trim();
-                                                final address =
-                                                    (value['address'] ?? '')
-                                                        .trim();
-                                                final block =
-                                                    (value['block'] ?? '')
-                                                        .trim();
-                                                final postcode =
-                                                    (value['postcode'] ?? '')
-                                                        .trim();
-                                                final state =
-                                                    (value['state'] ?? '')
-                                                        .trim();
-                                                final country =
-                                                    (value['country'] ?? '')
-                                                        .trim();
-                                                if (label.isEmpty ||
-                                                    address.isEmpty ||
-                                                    block.isEmpty ||
-                                                    postcode.isEmpty ||
-                                                    state.isEmpty ||
-                                                    country.isEmpty) {
-                                                  return;
-                                                }
-                                                final id = await _upsertAddress(
-                                                  label: label,
-                                                  address: address,
-                                                  block: block,
-                                                  postcode: postcode,
-                                                  state: state,
-                                                  country: country,
-                                                );
-                                                if (id != null &&
-                                                    context.mounted) {
-                                                  setState(
-                                                    () =>
-                                                        _selectedAddressId = id,
-                                                  );
-                                                  _showSnack(
-                                                    context,
-                                                    'Address added.',
-                                                  );
-                                                }
-                                              },
+                                                        final value =
+                                                            await _editAddressDialog(
+                                                              context,
+                                                            );
+                                                        if (value == null) {
+                                                          return;
+                                                        }
+                                                        final label =
+                                                            (value['label'] ??
+                                                                    '')
+                                                                .trim();
+                                                        final address =
+                                                            (value['address'] ??
+                                                                    '')
+                                                                .trim();
+                                                        final block =
+                                                            (value['block'] ??
+                                                                    '')
+                                                                .trim();
+                                                        final postcode =
+                                                            (value['postcode'] ??
+                                                                    '')
+                                                                .trim();
+                                                        final state =
+                                                            (value['state'] ??
+                                                                    '')
+                                                                .trim();
+                                                        final country =
+                                                            (value['country'] ??
+                                                                    '')
+                                                                .trim();
+                                                        if (label.isEmpty ||
+                                                            address.isEmpty ||
+                                                            block.isEmpty ||
+                                                            postcode.isEmpty ||
+                                                            state.isEmpty ||
+                                                            country.isEmpty) {
+                                                          return;
+                                                        }
+                                                        final id =
+                                                            await _upsertAddress(
+                                                              label: label,
+                                                              address: address,
+                                                              block: block,
+                                                              postcode:
+                                                                  postcode,
+                                                              state: state,
+                                                              country: country,
+                                                            );
+                                                        if (id != null &&
+                                                            context.mounted) {
+                                                          setState(
+                                                            () =>
+                                                                _selectedAddressId =
+                                                                    id,
+                                                          );
+                                                          _showSnack(
+                                                            context,
+                                                            'Address added.',
+                                                          );
+                                                        }
+                                                      },
                                               child: const Text('Add'),
                                             ),
                                           ],
@@ -1495,18 +1593,11 @@ class _CartPageState extends State<CartPage> {
                                         const SizedBox(width: 8),
                                         const Expanded(
                                           child: Text(
-                                            'Payment Method (Card Verification)',
+                                            'Payment Method',
                                             style: TextStyle(
                                               fontWeight: FontWeight.w900,
                                               color: CartPage.kOrange,
                                             ),
-                                          ),
-                                        ),
-                                        const Text(
-                                          'Billplz',
-                                          style: TextStyle(
-                                            fontWeight: FontWeight.w900,
-                                            color: CartPage.kOrange,
                                           ),
                                         ),
                                         const SizedBox(width: 8),
@@ -1524,12 +1615,55 @@ class _CartPageState extends State<CartPage> {
                                       ],
                                     ),
                                     const Text(
-                                      'Checkout flow: verify selected card by voice, then pay on Billplz.',
+                                      'Choose one method: Card, Digital Wallet, or Billplz sandbox.',
                                       style: TextStyle(
                                         fontSize: 12,
                                         fontWeight: FontWeight.w700,
                                         color: Colors.black54,
                                       ),
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Wrap(
+                                      spacing: 12,
+                                      runSpacing: 8,
+                                      children: [
+                                        ChoiceChip(
+                                          label: const Text('Card'),
+                                          selected:
+                                              _selectedPaymentMode ==
+                                              _CheckoutPaymentMode.card,
+                                          onSelected: (_) {
+                                            setState(() {
+                                              _selectedPaymentMode =
+                                                  _CheckoutPaymentMode.card;
+                                            });
+                                          },
+                                        ),
+                                        ChoiceChip(
+                                          label: const Text('Billplz'),
+                                          selected:
+                                              _selectedPaymentMode ==
+                                              _CheckoutPaymentMode.billplz,
+                                          onSelected: (_) {
+                                            setState(() {
+                                              _selectedPaymentMode =
+                                                  _CheckoutPaymentMode.billplz;
+                                            });
+                                          },
+                                        ),
+                                        ChoiceChip(
+                                          label: const Text('Digital Wallet'),
+                                          selected:
+                                              _selectedPaymentMode ==
+                                              _CheckoutPaymentMode.wallet,
+                                          onSelected: (_) {
+                                            setState(() {
+                                              _selectedPaymentMode =
+                                                  _CheckoutPaymentMode.wallet;
+                                            });
+                                          },
+                                        ),
+                                      ],
                                     ),
                                     if (isGuestUser)
                                       const Text(
@@ -1539,7 +1673,9 @@ class _CartPageState extends State<CartPage> {
                                           color: Colors.redAccent,
                                         ),
                                       )
-                                    else if (store.payments.isEmpty)
+                                    else if (_selectedPaymentMode ==
+                                            _CheckoutPaymentMode.card &&
+                                        store.payments.isEmpty)
                                       const Text(
                                         'No payment card yet. Add one from Card Detail.',
                                         style: TextStyle(
@@ -1547,7 +1683,8 @@ class _CartPageState extends State<CartPage> {
                                           color: Colors.redAccent,
                                         ),
                                       )
-                                    else
+                                    else if (_selectedPaymentMode ==
+                                        _CheckoutPaymentMode.card)
                                       ...store.payments.map((card) {
                                         final selected =
                                             _selectedPaymentMethod(store)?.id ==
@@ -1609,7 +1746,35 @@ class _CartPageState extends State<CartPage> {
                                             ],
                                           ),
                                         );
-                                      }),
+                                      })
+                                    else if (_selectedPaymentMode ==
+                                        _CheckoutPaymentMode.wallet)
+                                      Padding(
+                                        padding: const EdgeInsets.only(top: 8),
+                                        child: Text(
+                                          'Wallet Balance: RM ${store.walletBalance.toStringAsFixed(2)}'
+                                          '${store.walletBalance + 0.0001 < estimatedPayableTotal ? '\nNot enough balance for current total.' : ''}',
+                                          style: TextStyle(
+                                            fontWeight: FontWeight.w700,
+                                            color:
+                                                store.walletBalance + 0.0001 <
+                                                        estimatedPayableTotal
+                                                    ? Colors.redAccent
+                                                    : Colors.black87,
+                                          ),
+                                        ),
+                                      )
+                                    else
+                                      const Padding(
+                                        padding: EdgeInsets.only(top: 8),
+                                        child: Text(
+                                          'Billplz selected. You will be redirected to Billplz payment page during checkout.',
+                                          style: TextStyle(
+                                            fontWeight: FontWeight.w700,
+                                            color: Colors.black87,
+                                          ),
+                                        ),
+                                      ),
                                   ],
                                 ),
                               ),

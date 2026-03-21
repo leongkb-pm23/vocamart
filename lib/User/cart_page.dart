@@ -1055,7 +1055,7 @@ class _CartPageState extends State<CartPage> {
         var hasUnavailableItems = false;
         for (final item in store.cart) {
           final product = store.productById(item.productId);
-          if (product == null || product.quantity < item.qty) {
+          if (product == null || product.totalStoreStock < item.qty) {
             hasUnavailableItems = true;
             break;
           }
@@ -1137,8 +1137,14 @@ class _CartPageState extends State<CartPage> {
                                     return const SizedBox.shrink();
                                   }
                                   final outOfStock = product.isOutOfStock;
+                                  final chosenPrice =
+                                      store.bestPriceForProduct(product.id);
+                                  final unitPrice =
+                                      chosenPrice?.price ?? product.lowestPrice;
+                                  final chosenStore =
+                                      (chosenPrice?.store ?? '').trim();
                                   final exceedsStock =
-                                      item.qty > product.quantity;
+                                      item.qty > product.totalStoreStock;
 
                                   return Container(
                                     padding: const EdgeInsets.all(12),
@@ -1171,7 +1177,9 @@ class _CartPageState extends State<CartPage> {
                                                 ),
                                               ),
                                               Text(
-                                                'RM ${product.lowestPrice.toStringAsFixed(2)} each',
+                                                chosenStore.isEmpty
+                                                    ? 'RM ${unitPrice.toStringAsFixed(2)} each'
+                                                    : 'RM ${unitPrice.toStringAsFixed(2)} each ($chosenStore)',
                                                 style: const TextStyle(
                                                   color: CartPage.kOrange,
                                                   fontWeight: FontWeight.w700,
@@ -1187,7 +1195,7 @@ class _CartPageState extends State<CartPage> {
                                                 )
                                               else if (exceedsStock)
                                                 Text(
-                                                  'Only ${product.quantity} left in stock',
+                                                  'Only ${product.totalStoreStock} left in stock',
                                                   style: const TextStyle(
                                                     color: Colors.redAccent,
                                                     fontWeight: FontWeight.w800,

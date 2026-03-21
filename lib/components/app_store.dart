@@ -17,12 +17,14 @@ class ProductPrice {
   final double price;
   final String storeId;
   final double? distanceKm;
+  final int? stockQty;
 
   const ProductPrice({
     required this.store,
     required this.price,
     this.storeId = '',
     this.distanceKm,
+    this.stockQty,
   });
 }
 
@@ -38,6 +40,8 @@ class ProductItem {
   final DateTime createdAt;
   final List<ProductPrice> prices;
   final double? oldPrice;
+  final String sourceStoreId;
+  final String sourceStoreName;
 
   const ProductItem({
     required this.id,
@@ -50,12 +54,91 @@ class ProductItem {
     required this.createdAt,
     required this.prices,
     this.oldPrice,
+    this.sourceStoreId = '',
+    this.sourceStoreName = '',
   });
 
-  bool get isOutOfStock => quantity <= 0;
-  bool get isInStock => quantity > 0;
+  bool get isOutOfStock => totalStoreStock <= 0;
+  bool get isInStock => totalStoreStock > 0;
+
+  bool get hasKnownStoreStock {
+    for (final p in prices) {
+      if (p.stockQty != null) return true;
+    }
+    return false;
+  }
+
+  int get totalStoreStock {
+    final baseStock = quantity > 0 ? quantity : 0;
+    int total = 0;
+    bool anyKnown = false;
+    for (final p in prices) {
+      final qty = p.stockQty;
+      if (qty == null) continue;
+      anyKnown = true;
+      if (qty > 0) {
+        total += qty;
+      }
+    }
+    if (anyKnown) {
+      // Never let inferred per-store mapping hide known product stock.
+      return total > baseStock ? total : baseStock;
+    }
+    return baseStock;
+  }
+
+  bool get hasAnyStoreInStock {
+    if (quantity > 0) return true;
+    bool hasUnknown = false;
+    for (final p in prices) {
+      final qty = p.stockQty;
+      if (qty == null) {
+        hasUnknown = true;
+        continue;
+      }
+      if (qty > 0) return true;
+    }
+    return hasUnknown;
+  }
+
+  ProductPrice? get cheapestInStockPrice {
+    if (prices.isEmpty) return null;
+
+    ProductPrice? best;
+    if (hasKnownStoreStock) {
+      for (final p in prices) {
+        final qty = p.stockQty ?? 0;
+        if (qty <= 0) continue;
+        if (best == null || p.price < best.price) {
+          best = p;
+        }
+      }
+      if (best != null) return best;
+      // Fallback for partial mapping:
+      // prefer stores with unknown qty and ignore stores confirmed as 0 stock.
+      if (quantity > 0) {
+        for (final p in prices) {
+          final qty = p.stockQty;
+          if (qty != null && qty <= 0) continue;
+          if (best == null || p.price < best.price) {
+            best = p;
+          }
+        }
+      }
+      return best;
+    }
+
+    for (final p in prices) {
+      if (best == null || p.price < best.price) {
+        best = p;
+      }
+    }
+    return best;
+  }
 
   double get lowestPrice {
+    final best = cheapestInStockPrice;
+    if (best != null) return best.price;
     if (prices.isEmpty) return 0;
     var lowest = prices.first.price;
     for (final item in prices) {
@@ -336,6 +419,19 @@ class AppStore extends ChangeNotifier {
     return fallback;
   }
 
+  int? _asNullableInt(dynamic v) {
+    if (v is int) return v < 0 ? 0 : v;
+    if (v is num) {
+      final out = v.toInt();
+      return out < 0 ? 0 : out;
+    }
+    if (v is String) {
+      final parsed = int.tryParse(v.trim());
+      if (parsed != null) return parsed < 0 ? 0 : parsed;
+    }
+    return null;
+  }
+
   DateTime _asDate(dynamic v) {
     if (v is Timestamp) return v.toDate();
     if (v is DateTime) return v;
@@ -406,6 +502,7 @@ class AppStore extends ChangeNotifier {
         price: item.price,
         storeId: item.storeId,
         distanceKm: null,
+        stockQty: item.stockQty,
       );
     }
     final storePostcode = _storePostcode(
@@ -421,6 +518,7 @@ class AppStore extends ChangeNotifier {
       price: item.price,
       storeId: item.storeId,
       distanceKm: distance,
+      stockQty: item.stockQty,
     );
   }
 
@@ -476,12 +574,47 @@ class AppStore extends ChangeNotifier {
                 : (p.oldPrice! > oldPrice ? p.oldPrice : oldPrice);
       }
       for (final price in p.prices) {
+        final sourceStoreId = p.sourceStoreId.trim().toLowerCase();
+        final sourceStoreName = p.sourceStoreName.trim().toLowerCase();
+        final priceStoreId = price.storeId.trim().toLowerCase();
+        final priceStoreName = price.store.trim().toLowerCase();
+        int? inferredQty = price.stockQty;
+        if (inferredQty == null) {
+          final matchById =
+              sourceStoreId.isNotEmpty && sourceStoreId == priceStoreId;
+          final matchByName =
+              sourceStoreName.isNotEmpty && sourceStoreName == priceStoreName;
+          if (matchById || matchByName || p.prices.length == 1) {
+            inferredQty = p.quantity >= 0 ? p.quantity : 0;
+          }
+        }
+        final normalized = ProductPrice(
+          store: price.store,
+          price: price.price,
+          storeId: price.storeId,
+          distanceKm: price.distanceKm,
+          stockQty: inferredQty,
+        );
         final key =
             '${price.storeId.trim().toLowerCase()}|${price.store.trim().toLowerCase()}';
         final prev = byStore[key];
-        if (prev == null || price.price < prev.price) {
-          byStore[key] = price;
+        if (prev == null) {
+          byStore[key] = normalized;
+          continue;
         }
+
+        final mergedQty =
+            (prev.stockQty != null || normalized.stockQty != null)
+                ? (prev.stockQty ?? 0) + (normalized.stockQty ?? 0)
+                : null;
+        final chosen = normalized.price < prev.price ? normalized : prev;
+        byStore[key] = ProductPrice(
+          store: chosen.store,
+          price: chosen.price,
+          storeId: chosen.storeId,
+          distanceKm: chosen.distanceKm,
+          stockQty: mergedQty,
+        );
       }
     }
 
@@ -497,6 +630,18 @@ class AppStore extends ChangeNotifier {
       prices: _sortedPricesByNearest(byStore.values.toList()),
       oldPrice: oldPrice,
     );
+  }
+
+  ProductPrice? _bestPriceForPurchase(ProductItem product) {
+    final inStock = product.cheapestInStockPrice;
+    if (inStock != null) return inStock;
+    return null;
+  }
+
+  ProductPrice? bestPriceForProduct(String productId) {
+    final product = productById(productId) ?? _rawProductById(productId);
+    if (product == null) return null;
+    return _bestPriceForPurchase(product);
   }
 
   void _rebuildDisplayProducts() {
@@ -571,10 +716,15 @@ class AppStore extends ChangeNotifier {
       final base = p['price'];
       // promoPrice has priority when present and valid.
       final effective = (promo is num && promo > 0) ? promo : base;
+      final stockQty =
+          _asNullableInt(p['quantity']) ??
+          _asNullableInt(p['qty']) ??
+          _asNullableInt(p['stock']);
       final item = ProductPrice(
         store: (p['storeName'] ?? p['storeId'] ?? pDoc.id).toString(),
         storeId: (p['storeId'] ?? pDoc.id).toString(),
         price: _asDouble(effective),
+        stockQty: stockQty,
       );
       if (item.price > 0) {
         prices.add(item);
@@ -592,6 +742,8 @@ class AppStore extends ChangeNotifier {
       createdAt: _asDate(data['createdAt'] ?? data['updatedAt']),
       prices: _sortedPricesByNearest(prices),
       oldPrice: data['oldPrice'] is num ? _asDouble(data['oldPrice']) : null,
+      sourceStoreId: (data['storeId'] ?? '').toString().trim(),
+      sourceStoreName: (data['storeName'] ?? '').toString().trim(),
     );
   }
 
@@ -603,7 +755,7 @@ class AppStore extends ChangeNotifier {
     var changed = false;
 
     for (final item in _cart) {
-      final product = _rawProductById(item.productId);
+      final product = _productForCart(item.productId);
       final ref = _userDoc(uid).collection('cart').doc(item.productId);
       if (product == null || item.qty <= 0) {
         batch.delete(ref);
@@ -611,7 +763,12 @@ class AppStore extends ChangeNotifier {
         continue;
       }
 
-      final allowedQty = product.quantity;
+      final allowedQty = product.totalStoreStock;
+
+      // If store-level stock mapping is incomplete, do not auto-delete user cart.
+      if (allowedQty <= 0 && product.hasAnyStoreInStock) {
+        continue;
+      }
 
       if (allowedQty <= 0 && item.qty > 0) {
         batch.delete(ref);
@@ -951,12 +1108,49 @@ class AppStore extends ChangeNotifier {
     return null;
   }
 
+  ProductItem? _productForCart(String id) {
+    return productById(id) ?? _rawProductById(id);
+  }
+
+  String _normalizedProductName(String text) {
+    return text.trim().toLowerCase();
+  }
+
+  bool _rawMatchesStore(ProductItem raw, String storeIdLower) {
+    if (storeIdLower.isEmpty) return true;
+    if (raw.sourceStoreId.trim().toLowerCase() == storeIdLower) return true;
+    for (final p in raw.prices) {
+      if (p.storeId.trim().toLowerCase() == storeIdLower) return true;
+    }
+    return false;
+  }
+
+  String _resolveRawProductIdForCartItem(CartItem item) {
+    final merged = _productForCart(item.productId);
+    if (merged == null) return item.productId;
+
+    final selected = _bestPriceForPurchase(merged);
+    final wantedStoreId = selected?.storeId.trim().toLowerCase() ?? '';
+    final wantedName = _normalizedProductName(merged.name);
+
+    ProductItem? best;
+    for (final raw in _products) {
+      if (_normalizedProductName(raw.name) != wantedName) continue;
+      if (!_rawMatchesStore(raw, wantedStoreId)) continue;
+      if (best == null || raw.quantity > best.quantity) {
+        best = raw;
+      }
+    }
+
+    return best?.id ?? item.productId;
+  }
+
   int availableStock(String productId) {
-    return _rawProductById(productId)?.quantity ?? 0;
+    return _productForCart(productId)?.totalStoreStock ?? 0;
   }
 
   bool canAddToCart(String productId, {int qty = 1}) {
-    final p = _rawProductById(productId);
+    final p = _productForCart(productId);
     if (p == null) return false;
     if (qty <= 0) return false;
 
@@ -967,7 +1161,7 @@ class AppStore extends ChangeNotifier {
         break;
       }
     }
-    return (inCart + qty) <= p.quantity;
+    return (inCart + qty) <= p.totalStoreStock;
   }
 
   List<ProductItem> filteredProducts({String? category, String search = ''}) {
@@ -1057,11 +1251,13 @@ class AppStore extends ChangeNotifier {
   double get cartTotal {
     double total = 0;
     for (final item in _cart) {
-      final p = _rawProductById(item.productId);
+      final p = _productForCart(item.productId);
       if (p == null) continue;
-      final cappedQty = item.qty > p.quantity ? p.quantity : item.qty;
+      final best = _bestPriceForPurchase(p);
+      if (best == null) continue;
+      final cappedQty = item.qty > p.totalStoreStock ? p.totalStoreStock : item.qty;
       if (cappedQty <= 0) continue;
-      total += p.lowestPrice * cappedQty;
+      total += best.price * cappedQty;
     }
     return total;
   }
@@ -1146,9 +1342,10 @@ class AppStore extends ChangeNotifier {
     final uid = _uid;
     if (uid == null) return false;
 
-    final product = _rawProductById(productId);
+    final product = _productForCart(productId);
     if (product == null || qty <= 0) return false;
-    if (product.quantity <= 0) return false;
+    final availableQty = product.totalStoreStock;
+    if (availableQty <= 0 && !product.hasAnyStoreInStock) return false;
 
     final ref = _userDoc(uid).collection('cart').doc(productId);
     final snap = await ref.get();
@@ -1157,7 +1354,7 @@ class AppStore extends ChangeNotifier {
       fallback: 0,
     );
     final next = current + qty;
-    if (next > product.quantity) return false;
+    if (availableQty > 0 && next > availableQty) return false;
     await ref.set({
       'qty': next,
       'quantity': next,
@@ -1178,8 +1375,12 @@ class AppStore extends ChangeNotifier {
       return true;
     }
 
-    final product = _rawProductById(productId);
-    if (product == null || qty > product.quantity) {
+    final product = _productForCart(productId);
+    if (product == null) {
+      return false;
+    }
+    final allowed = product.totalStoreStock;
+    if (allowed > 0 && qty > allowed) {
       return false;
     }
 
@@ -1393,17 +1594,22 @@ class AppStore extends ChangeNotifier {
   double _subtotalForItems(List<CartItem> items) {
     double total = 0;
     for (final item in items) {
-      final p = _rawProductById(item.productId);
+      final p = _productForCart(item.productId);
       if (p == null || item.qty <= 0) continue;
-      total += p.lowestPrice * item.qty;
+      final best = _bestPriceForPurchase(p);
+      if (best == null) continue;
+      total += best.price * item.qty;
     }
     return total;
   }
 
-  List<Map<String, dynamic>> _orderItemsToMap(List<CartItem> items) {
+  List<Map<String, dynamic>> _orderItemsToMap(
+    List<CartItem> items, {
+    Map<String, String>? resolvedProductIds,
+  }) {
     final rows = <Map<String, dynamic>>[];
     for (final item in items) {
-      final product = _rawProductById(item.productId);
+      final product = _productForCart(item.productId);
       String storeId = '';
       String storeName = '';
       double unitPrice = 0.0;
@@ -1411,24 +1617,19 @@ class AppStore extends ChangeNotifier {
 
       if (product != null) {
         category = product.category.trim();
-        if (product.prices.isNotEmpty) {
-          var best = product.prices.first;
-          for (final p in product.prices) {
-            if (p.price <= best.price) {
-              best = p;
-            }
-          }
+        final best = _bestPriceForPurchase(product);
+        if (best != null) {
           storeId = best.storeId.trim();
           storeName = best.store.trim();
           unitPrice = best.price;
-        } else {
-          unitPrice = product.lowestPrice;
         }
       }
 
       final qty = item.qty > 0 ? item.qty : 1;
       rows.add({
-        'productId': item.productId,
+        'productId':
+            resolvedProductIds?[item.productId] ??
+            _resolveRawProductIdForCartItem(item),
         'qty': qty,
         if (storeId.isNotEmpty) 'storeId': storeId,
         if (storeName.isNotEmpty) 'storeName': storeName,
@@ -1507,6 +1708,13 @@ class AppStore extends ChangeNotifier {
       voucherCode: voucher?.code ?? '',
     );
 
+    final resolvedProductIds = <String, String>{};
+    for (final item in items) {
+      resolvedProductIds[item.productId] = _resolveRawProductIdForCartItem(
+        item,
+      );
+    }
+
     try {
       await _db.runTransaction((txn) async {
         final productSnapshots =
@@ -1514,19 +1722,24 @@ class AppStore extends ChangeNotifier {
 
         // Firestore transaction rule: all reads must happen before writes.
         for (final item in items) {
-          final productRef = _db.collection('products').doc(item.productId);
+          final resolvedProductId =
+              resolvedProductIds[item.productId] ?? item.productId;
+          if (productSnapshots.containsKey(resolvedProductId)) continue;
+          final productRef = _db.collection('products').doc(resolvedProductId);
           final productSnap = await txn.get(productRef);
           if (!productSnap.exists) {
-            throw StateError('Product not found: ${item.productId}');
+            throw StateError('Product not found: $resolvedProductId');
           }
-          productSnapshots[item.productId] = productSnap;
+          productSnapshots[resolvedProductId] = productSnap;
         }
 
         for (final item in items) {
-          final productRef = _db.collection('products').doc(item.productId);
-          final productSnap = productSnapshots[item.productId];
+          final resolvedProductId =
+              resolvedProductIds[item.productId] ?? item.productId;
+          final productRef = _db.collection('products').doc(resolvedProductId);
+          final productSnap = productSnapshots[resolvedProductId];
           if (productSnap == null || !productSnap.exists) {
-            throw StateError('Product not found: ${item.productId}');
+            throw StateError('Product not found: $resolvedProductId');
           }
           final data = productSnap.data() ?? const <String, dynamic>{};
           final productName = (data['name'] ?? item.productId).toString();
@@ -1568,7 +1781,10 @@ class AppStore extends ChangeNotifier {
           'paymentType': paymentMethod?.type,
           'paymentLast4': paymentMethod?.last4,
           'paymentStatus': 'pending',
-          'items': _orderItemsToMap(order.items),
+          'items': _orderItemsToMap(
+            order.items,
+            resolvedProductIds: resolvedProductIds,
+          ),
         });
 
         for (final item in items) {
@@ -1661,17 +1877,27 @@ class AppStore extends ChangeNotifier {
       voucherCode: voucher?.code ?? '',
     );
 
+    final resolvedProductIds = <String, String>{};
+    for (final item in items) {
+      resolvedProductIds[item.productId] = _resolveRawProductIdForCartItem(
+        item,
+      );
+    }
+
     try {
       await _db.runTransaction((txn) async {
         final productSnapshots =
             <String, DocumentSnapshot<Map<String, dynamic>>>{};
         for (final item in items) {
-          final productRef = _db.collection('products').doc(item.productId);
+          final resolvedProductId =
+              resolvedProductIds[item.productId] ?? item.productId;
+          if (productSnapshots.containsKey(resolvedProductId)) continue;
+          final productRef = _db.collection('products').doc(resolvedProductId);
           final productSnap = await txn.get(productRef);
           if (!productSnap.exists) {
-            throw StateError('Product not found: ${item.productId}');
+            throw StateError('Product not found: $resolvedProductId');
           }
-          productSnapshots[item.productId] = productSnap;
+          productSnapshots[resolvedProductId] = productSnap;
         }
 
         final userRef = _userDoc(uid);
@@ -1687,10 +1913,12 @@ class AppStore extends ChangeNotifier {
         final nextBalance = _round2(currentBalance - needed);
 
         for (final item in items) {
-          final productRef = _db.collection('products').doc(item.productId);
-          final productSnap = productSnapshots[item.productId];
+          final resolvedProductId =
+              resolvedProductIds[item.productId] ?? item.productId;
+          final productRef = _db.collection('products').doc(resolvedProductId);
+          final productSnap = productSnapshots[resolvedProductId];
           if (productSnap == null || !productSnap.exists) {
-            throw StateError('Product not found: ${item.productId}');
+            throw StateError('Product not found: $resolvedProductId');
           }
           final data = productSnap.data() ?? const <String, dynamic>{};
           final productName = (data['name'] ?? item.productId).toString();
@@ -1733,7 +1961,10 @@ class AppStore extends ChangeNotifier {
           'paymentStatus': 'paid',
           'paymentGateway': 'wallet',
           'paidAt': FieldValue.serverTimestamp(),
-          'items': _orderItemsToMap(order.items),
+          'items': _orderItemsToMap(
+            order.items,
+            resolvedProductIds: resolvedProductIds,
+          ),
         });
 
         txn.set(userRef, {

@@ -46,7 +46,15 @@ class ProductDetailPage extends StatelessWidget {
   List<Widget> _priceRows(ProductItem currentProduct) {
     // Build one row per store price to show comparison clearly.
     final rows = <Widget>[];
+    final bestInStock = currentProduct.cheapestInStockPrice;
     for (final priceItem in currentProduct.prices) {
+      final qty = priceItem.stockQty;
+      final isOut = qty != null && qty <= 0;
+      final isBestInStock =
+          bestInStock != null &&
+          bestInStock.storeId.trim().toLowerCase() ==
+              priceItem.storeId.trim().toLowerCase() &&
+          (bestInStock.price - priceItem.price).abs() < 0.0001;
       rows.add(
         Container(
           margin: const EdgeInsets.only(bottom: 8),
@@ -58,11 +66,27 @@ class ProductDetailPage extends StatelessWidget {
           child: Row(
             children: [
               Expanded(
-                child: Text(
-                  priceItem.distanceKm == null
-                      ? priceItem.store
-                      : '${priceItem.store} (${priceItem.distanceKm!.toStringAsFixed(1)} km)',
-                  style: const TextStyle(fontWeight: FontWeight.w800),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      priceItem.distanceKm == null
+                          ? priceItem.store
+                          : '${priceItem.store} (${priceItem.distanceKm!.toStringAsFixed(1)} km)',
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      qty == null
+                          ? 'Qty: -'
+                          : (qty <= 0 ? 'Qty: 0 (Out of stock)' : 'Qty: $qty'),
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: isOut ? Colors.redAccent : Colors.black54,
+                      ),
+                    ),
+                  ],
                 ),
               ),
               Text(
@@ -70,7 +94,7 @@ class ProductDetailPage extends StatelessWidget {
                 style: TextStyle(
                   fontWeight: FontWeight.w900,
                   color:
-                      priceItem.price == currentProduct.lowestPrice
+                      isBestInStock
                           ? kOrange
                           : Colors.black,
                 ),
@@ -92,7 +116,8 @@ class ProductDetailPage extends StatelessWidget {
       animation: store,
       builder: (context, _) {
         final liveProduct = store.productById(product.id) ?? product;
-        final outOfStock = liveProduct.isOutOfStock;
+        final availableQty = liveProduct.totalStoreStock;
+        final outOfStock = availableQty <= 0 && !liveProduct.hasAnyStoreInStock;
         final liked = store.likedProductIds.contains(product.id);
         final tracked = store.trackedProductIds.contains(product.id);
         final target = store.trackedTargetPrice(product.id);
@@ -169,7 +194,7 @@ class ProductDetailPage extends StatelessWidget {
                 Text(
                   outOfStock
                       ? 'Stock: 0'
-                      : 'Stock available: ${liveProduct.quantity}',
+                      : 'Stock available: $availableQty',
                   style: TextStyle(
                     fontWeight: FontWeight.w800,
                     color: outOfStock ? Colors.redAccent : Colors.black87,

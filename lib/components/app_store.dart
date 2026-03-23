@@ -1714,6 +1714,23 @@ class AppStore extends ChangeNotifier {
         item,
       );
     }
+    final orderItemRows = _orderItemsToMap(
+      order.items,
+      resolvedProductIds: resolvedProductIds,
+    );
+    final storeIdSet = <String>{};
+    final storeNameSet = <String>{};
+    for (final row in orderItemRows) {
+      final sid = (row['storeId'] ?? '').toString().trim();
+      final sname = (row['storeName'] ?? '').toString().trim();
+      if (sid.isNotEmpty) storeIdSet.add(sid);
+      if (sname.isNotEmpty) storeNameSet.add(sname);
+    }
+    final sortedStoreIds = storeIdSet.toList()..sort();
+    final sortedStoreNames = storeNameSet.toList()..sort();
+    final primaryStoreId = sortedStoreIds.isEmpty ? '' : sortedStoreIds.first;
+    final primaryStoreName =
+        sortedStoreNames.isEmpty ? '' : sortedStoreNames.first;
 
     try {
       await _db.runTransaction((txn) async {
@@ -1781,10 +1798,11 @@ class AppStore extends ChangeNotifier {
           'paymentType': paymentMethod?.type,
           'paymentLast4': paymentMethod?.last4,
           'paymentStatus': 'pending',
-          'items': _orderItemsToMap(
-            order.items,
-            resolvedProductIds: resolvedProductIds,
-          ),
+          if (primaryStoreId.isNotEmpty) 'storeId': primaryStoreId,
+          if (primaryStoreName.isNotEmpty) 'storeName': primaryStoreName,
+          if (sortedStoreIds.isNotEmpty) 'storeIds': sortedStoreIds,
+          if (sortedStoreNames.isNotEmpty) 'storeNames': sortedStoreNames,
+          'items': orderItemRows,
         });
 
         for (final item in items) {
@@ -1883,6 +1901,23 @@ class AppStore extends ChangeNotifier {
         item,
       );
     }
+    final orderItemRows = _orderItemsToMap(
+      order.items,
+      resolvedProductIds: resolvedProductIds,
+    );
+    final storeIdSet = <String>{};
+    final storeNameSet = <String>{};
+    for (final row in orderItemRows) {
+      final sid = (row['storeId'] ?? '').toString().trim();
+      final sname = (row['storeName'] ?? '').toString().trim();
+      if (sid.isNotEmpty) storeIdSet.add(sid);
+      if (sname.isNotEmpty) storeNameSet.add(sname);
+    }
+    final sortedStoreIds = storeIdSet.toList()..sort();
+    final sortedStoreNames = storeNameSet.toList()..sort();
+    final primaryStoreId = sortedStoreIds.isEmpty ? '' : sortedStoreIds.first;
+    final primaryStoreName =
+        sortedStoreNames.isEmpty ? '' : sortedStoreNames.first;
 
     try {
       await _db.runTransaction((txn) async {
@@ -1961,10 +1996,11 @@ class AppStore extends ChangeNotifier {
           'paymentStatus': 'paid',
           'paymentGateway': 'wallet',
           'paidAt': FieldValue.serverTimestamp(),
-          'items': _orderItemsToMap(
-            order.items,
-            resolvedProductIds: resolvedProductIds,
-          ),
+          if (primaryStoreId.isNotEmpty) 'storeId': primaryStoreId,
+          if (primaryStoreName.isNotEmpty) 'storeName': primaryStoreName,
+          if (sortedStoreIds.isNotEmpty) 'storeIds': sortedStoreIds,
+          if (sortedStoreNames.isNotEmpty) 'storeNames': sortedStoreNames,
+          'items': orderItemRows,
         });
 
         txn.set(userRef, {

@@ -534,75 +534,31 @@ class _DashboardTab extends StatelessWidget {
       orderCount = (sales['totalOrders'] ?? 0) as int;
       revenue = ((sales['totalRevenue'] ?? 0.0) as num).toDouble();
     } else {
-      List<QueryDocumentSnapshot<Map<String, dynamic>>> ordersDocs;
+      bool loadedFromCache = false;
       try {
-        final ordersSnap = await db.collectionGroup('orders').get();
-        ordersDocs = ordersSnap.docs;
-      } on FirebaseException catch (e) {
-        if (e.code == 'permission-denied' || e.code == 'failed-precondition') {
-          ordersDocs = const <QueryDocumentSnapshot<Map<String, dynamic>>>[];
-        } else {
-          rethrow;
+        final cacheSnap =
+            await db
+                .collection('stores')
+                .doc(cleanStoreId)
+                .collection('report_cache')
+                .doc('yearly')
+                .get();
+        final cache = cacheSnap.data() ?? const <String, dynamic>{};
+        final cacheOrders = cache['orders'];
+        final cacheRevenue = cache['revenue'];
+        if (cacheOrders is num || cacheRevenue is num) {
+          orderCount = (cacheOrders is num) ? cacheOrders.toInt() : 0;
+          revenue = (cacheRevenue is num) ? cacheRevenue.toDouble() : 0.0;
+          loadedFromCache = true;
         }
+      } on FirebaseException {
+        // Ignore cache read issues; fallback to live summary.
       }
-      for (final orderDoc in ordersDocs) {
-        final order = orderDoc.data();
-        final items = (order['items'] as List?) ?? const [];
-        final orderStoreId =
-            (order['storeId'] ?? '').toString().trim().toLowerCase();
-        bool hasThisStoreItem = false;
-        double thisStoreRevenue = 0.0;
 
-        for (final raw in items) {
-          if (raw is! Map) continue;
-          final item = Map<String, dynamic>.from(raw);
-          final itemStoreId =
-              (item['storeId'] ?? '').toString().trim().toLowerCase();
-          final itemProductId = (item['productId'] ?? '').toString().trim();
-          final belongsToStore =
-              itemStoreId == cleanStoreIdLower ||
-              (itemStoreId.isEmpty && scopedProductIds.contains(itemProductId));
-          if (!belongsToStore) continue;
-
-          int qty = 1;
-          final qtyRaw = item['qty'];
-          if (qtyRaw is int) qty = qtyRaw;
-          if (qtyRaw is num) qty = qtyRaw.toInt();
-          if (qty <= 0) qty = 1;
-
-          double lineTotal = 0.0;
-          final lt = item['lineTotal'];
-          if (lt is num) {
-            lineTotal = lt.toDouble();
-          } else {
-            final up = item['unitPrice'];
-            if (up is num) {
-              lineTotal = up.toDouble() * qty;
-            } else {
-              final orderTotal = order['total'];
-              if (orderTotal is num && items.isNotEmpty) {
-                lineTotal = orderTotal.toDouble() / items.length;
-              }
-            }
-          }
-
-          hasThisStoreItem = true;
-          thisStoreRevenue += lineTotal;
-        }
-
-        if (hasThisStoreItem) {
-          orderCount++;
-          revenue += thisStoreRevenue;
-          continue;
-        }
-
-        if (orderStoreId == cleanStoreIdLower) {
-          final total = order['total'];
-          if (total is num && total.toDouble() > 0) {
-            orderCount++;
-            revenue += total.toDouble();
-          }
-        }
+      if (!loadedFromCache) {
+        final summary = await svc.storeScopedOrderSummary(storeId: cleanStoreId);
+        orderCount = (summary['orders'] as int?) ?? 0;
+        revenue = ((summary['revenue'] as num?) ?? 0.0).toDouble();
       }
     }
 
@@ -2849,11 +2805,25 @@ class _PricesTabState extends State<_PricesTab> {
               const SizedBox(height: 8),
               DropdownButtonFormField<String>(
                 value: _selectedProductId,
+                isExpanded: true,
                 decoration: _adminInputDecoration(
                   label: 'Product',
                   prefixIcon: Icons.inventory_2_outlined,
                 ),
                 items: _productItems(products),
+                selectedItemBuilder: (context) {
+                  return products.map((product) {
+                    final name = (product.data()['name'] ?? product.id).toString();
+                    return Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    );
+                  }).toList();
+                },
                 onChanged: (v) {
                   if (v == null) return;
                   final found = _productById(products, v);
@@ -2872,6 +2842,8 @@ class _PricesTabState extends State<_PricesTab> {
                 child: Text(
                   'Step 2: Manage prices for $_selectedProductName (${_selectedProductId ?? ''})',
                   style: const TextStyle(fontWeight: FontWeight.w700),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
               const SizedBox(height: 10),

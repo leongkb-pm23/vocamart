@@ -19,6 +19,11 @@ class FirestoreService {
 
   DateTime? _adminOrdersCacheAt;
   List<QueryDocumentSnapshot<Map<String, dynamic>>>? _adminOrdersCache;
+  final Map<String, DateTime> _scopedAdminOrdersCacheAt = {};
+  final Map<String, List<QueryDocumentSnapshot<Map<String, dynamic>>>>
+  _scopedAdminOrdersCache = {};
+  final Map<String, DateTime> _storeSummaryCacheAt = {};
+  final Map<String, Map<String, dynamic>> _storeSummaryCache = {};
 
   DateTime? _salesSummaryCacheAt;
   Map<String, dynamic>? _salesSummaryCache;
@@ -86,8 +91,38 @@ class FirestoreService {
   void _invalidateOrderCaches() {
     _adminOrdersCache = null;
     _adminOrdersCacheAt = null;
+    _scopedAdminOrdersCache.clear();
+    _scopedAdminOrdersCacheAt.clear();
+    _storeSummaryCache.clear();
+    _storeSummaryCacheAt.clear();
     _salesSummaryCache = null;
     _salesSummaryCacheAt = null;
+  }
+
+  DateTime _asDate(Object? v) {
+    if (v is Timestamp) return v.toDate();
+    if (v is DateTime) return v;
+    return DateTime.fromMillisecondsSinceEpoch(0);
+  }
+
+  bool _inRange(DateTime dt, DateTime? startInclusive, DateTime? endExclusive) {
+    if (startInclusive != null && dt.isBefore(startInclusive)) return false;
+    if (endExclusive != null && !dt.isBefore(endExclusive)) return false;
+    return true;
+  }
+
+  Future<List<QueryDocumentSnapshot<Map<String, dynamic>>>> _safeQueryDocs(
+    Future<QuerySnapshot<Map<String, dynamic>>> Function() loader,
+  ) async {
+    try {
+      final snap = await loader();
+      return snap.docs;
+    } on FirebaseException catch (e) {
+      if (e.code == 'permission-denied' || e.code == 'failed-precondition') {
+        return const <QueryDocumentSnapshot<Map<String, dynamic>>>[];
+      }
+      rethrow;
+    }
   }
 
   Future<bool> _safeDocExists(
@@ -151,18 +186,8 @@ class FirestoreService {
   Future<bool> isAdmin() async {
     final user = _currentUser;
     if (user == null || user.isAnonymous) return false;
-    final adminDocExists = await _safeDocExists(
-      _db.collection('admins').doc(user.uid),
-    );
-    if (adminDocExists) return true;
-    try {
-      final userDoc = await _db.collection('users').doc(user.uid).get();
-      final role =
-          (userDoc.data()?['role'] ?? '').toString().trim().toLowerCase();
-      return role == 'admin';
-    } on FirebaseException {
-      return false;
-    }
+    // Keep this aligned with Firestore rules: admin access is keyed by admins/{uid}.
+    return _safeDocExists(_db.collection('admins').doc(user.uid));
   }
 
   Future<String> adminOrSuperAdminRole() async {
@@ -958,29 +983,171 @@ class FirestoreService {
     return result;
   }
 
+  Future<List<QueryDocumentSnapshot<Map<String, dynamic>>>> _loadScopedOrdersByUsers(
+    String storeId, {
+    int perUserLimit = 200,
+    int maxUsers = 1200,
+    int batchSize = 12,
+  }) async {
+    final cleanStoreId = storeId.trim();
+    if (cleanStoreId.isEmpty) {
+      return const <QueryDocumentSnapshot<Map<String, dynamic>>>[];
+    }
+
+    final users = await _db.collection('users').limit(maxUsers).get();
+    final byPath = <String, QueryDocumentSnapshot<Map<String, dynamic>>>{};
+
+    Future<void> addDocs(
+      Query<Map<String, dynamic>> query,
+    ) async {
+      try {
+        final snap = await query.get();
+        for (final d in snap.docs) {
+          byPath[d.reference.path] = d;
+        }
+      } on FirebaseException catch (e) {
+        if (e.code == 'permission-denied' || e.code == 'failed-precondition') {
+          return;
+        }
+        rethrow;
+      }
+    }
+
+    for (int i = 0; i < users.docs.length; i += batchSize) {
+      final end =
+          (i + batchSize > users.docs.length)
+              ? users.docs.length
+              : i + batchSize;
+      final batch = users.docs.sublist(i, end);
+
+      for (final userDoc in batch) {
+        final ordersRef = userDoc.reference.collection('orders');
+        await addDocs(
+          ordersRef
+              .where('storeId', isEqualTo: cleanStoreId)
+              .limit(perUserLimit),
+        );
+        await addDocs(
+          ordersRef
+              .where('storeIds', arrayContains: cleanStoreId)
+              .limit(perUserLimit),
+        );
+      }
+    }
+
+    final result = byPath.values.toList();
+    DateTime asDate(Object? v) {
+      if (v is Timestamp) return v.toDate();
+      return DateTime.fromMillisecondsSinceEpoch(0);
+    }
+
+    result.sort((a, b) {
+      final ad = asDate(a.data()['createdAt']);
+      final bd = asDate(b.data()['createdAt']);
+      return bd.compareTo(ad);
+    });
+    return result;
+  }
+
   Future<List<QueryDocumentSnapshot<Map<String, dynamic>>>> ordersAllForAdmin({
     bool forceRefresh = false,
+    String? storeId,
   }) async {
     final now = DateTime.now();
+    final scopedStoreId = (storeId ?? '').trim();
     final cached = _adminOrdersCache;
     final cacheAt = _adminOrdersCacheAt;
+    final scopedCached = _scopedAdminOrdersCache[scopedStoreId];
+    final scopedCacheAt = _scopedAdminOrdersCacheAt[scopedStoreId];
 
-    if (!forceRefresh &&
+    if (scopedStoreId.isEmpty &&
+        !forceRefresh &&
         cached != null &&
         cacheAt != null &&
         now.difference(cacheAt).inSeconds < 20) {
       return cached;
     }
+    if (scopedStoreId.isNotEmpty &&
+        !forceRefresh &&
+        scopedCached != null &&
+        scopedCacheAt != null &&
+        now.difference(scopedCacheAt).inSeconds < 20) {
+      return scopedCached;
+    }
 
     List<QueryDocumentSnapshot<Map<String, dynamic>>> loaded;
-    try {
-      final groupSnap = await _db.collectionGroup('orders').get();
-      loaded = groupSnap.docs;
-    } on FirebaseException catch (e) {
-      if (e.code == 'permission-denied' || e.code == 'failed-precondition') {
-        loaded = await _loadOrdersByUsers(batchSize: 20);
-      } else {
-        rethrow;
+    if (scopedStoreId.isNotEmpty) {
+      final byPath = <String, QueryDocumentSnapshot<Map<String, dynamic>>>{};
+
+      Future<void> addScopedQuery(
+        Query<Map<String, dynamic>> query,
+      ) async {
+        try {
+          final snap = await query.get();
+          for (final d in snap.docs) {
+            byPath[d.reference.path] = d;
+          }
+        } on FirebaseException catch (e) {
+          if (e.code == 'permission-denied' || e.code == 'failed-precondition') {
+            return;
+          }
+          rethrow;
+        }
+      }
+
+      await addScopedQuery(
+        _db.collectionGroup('orders').where('storeId', isEqualTo: scopedStoreId),
+      );
+      await addScopedQuery(
+        _db
+            .collectionGroup('orders')
+            .where('storeIds', arrayContains: scopedStoreId),
+      );
+      String scopedStoreName = '';
+      try {
+        final info = await myStoreInfo();
+        scopedStoreName = (info['storeName'] ?? '').toString().trim();
+      } catch (_) {
+        scopedStoreName = '';
+      }
+      if (scopedStoreName.isNotEmpty) {
+        await addScopedQuery(
+          _db
+              .collectionGroup('orders')
+              .where('storeName', isEqualTo: scopedStoreName),
+        );
+        await addScopedQuery(
+          _db
+              .collectionGroup('orders')
+              .where('storeNames', arrayContains: scopedStoreName),
+        );
+      }
+
+      // Some projects/rule combinations still deny arrayContains on collectionGroup.
+      // Fall back to per-user scoped reads so admin reports stay usable.
+      if (byPath.isEmpty) {
+        final scopedByUsers = await _loadScopedOrdersByUsers(
+          scopedStoreId,
+          batchSize: 20,
+        );
+        for (final d in scopedByUsers) {
+          byPath[d.reference.path] = d;
+        }
+      }
+
+      loaded = byPath.values.toList();
+    } else {
+      try {
+        final groupSnap = await _db.collectionGroup('orders').get();
+        loaded = List<QueryDocumentSnapshot<Map<String, dynamic>>>.from(
+          groupSnap.docs,
+        );
+      } on FirebaseException catch (e) {
+        if (e.code == 'permission-denied' || e.code == 'failed-precondition') {
+          loaded = await _loadOrdersByUsers(batchSize: 20);
+        } else {
+          rethrow;
+        }
       }
     }
 
@@ -995,9 +1162,171 @@ class FirestoreService {
       return bd.compareTo(ad);
     });
 
-    _adminOrdersCache = loaded;
-    _adminOrdersCacheAt = now;
+    if (scopedStoreId.isEmpty) {
+      _adminOrdersCache = loaded;
+      _adminOrdersCacheAt = now;
+    } else {
+      _scopedAdminOrdersCache[scopedStoreId] = loaded;
+      _scopedAdminOrdersCacheAt[scopedStoreId] = now;
+    }
     return loaded;
+  }
+
+  Future<Map<String, dynamic>> storeScopedOrderSummary({
+    required String storeId,
+    DateTime? startInclusive,
+    DateTime? endExclusive,
+    bool forceRefresh = false,
+  }) async {
+    final cleanStoreId = storeId.trim();
+    if (cleanStoreId.isEmpty) {
+      return {
+        'orders': 0,
+        'items': 0,
+        'revenue': 0.0,
+        'topCategoryStats': <Map<String, dynamic>>[],
+      };
+    }
+
+    final key =
+        '${cleanStoreId.toLowerCase()}|${startInclusive?.millisecondsSinceEpoch ?? -1}|${endExclusive?.millisecondsSinceEpoch ?? -1}';
+    final now = DateTime.now();
+    final cache = _storeSummaryCache[key];
+    final cacheAt = _storeSummaryCacheAt[key];
+    if (!forceRefresh &&
+        cache != null &&
+        cacheAt != null &&
+        now.difference(cacheAt).inSeconds < 20) {
+      return cache;
+    }
+
+    final cleanStoreLower = cleanStoreId.toLowerCase();
+    final db = FirebaseFirestore.instance;
+    final productsDocs = await _safeQueryDocs(() => db.collection('products').get());
+    final pricesDocs = await _safeQueryDocs(() => db.collectionGroup('prices').get());
+    final ordersDocs = await ordersAllForAdmin(storeId: cleanStoreId);
+
+    final productCategoryById = <String, String>{};
+    final productStoreIds = <String, Set<String>>{};
+
+    for (final doc in productsDocs) {
+      final data = doc.data();
+      final category = (data['category'] ?? 'Uncategorized').toString().trim();
+      productCategoryById[doc.id] =
+          category.isEmpty ? 'Uncategorized' : category;
+      final sid = (data['storeId'] ?? '').toString().trim().toLowerCase();
+      if (sid.isNotEmpty) {
+        productStoreIds.putIfAbsent(doc.id, () => <String>{}).add(sid);
+      }
+    }
+
+    for (final priceDoc in pricesDocs) {
+      final sid = (priceDoc.data()['storeId'] ?? '').toString().trim().toLowerCase();
+      final pid = priceDoc.reference.parent.parent?.id ?? '';
+      if (sid.isEmpty || pid.isEmpty) continue;
+      productStoreIds.putIfAbsent(pid, () => <String>{}).add(sid);
+    }
+
+    int totalOrders = 0;
+    int totalItems = 0;
+    double totalRevenue = 0.0;
+    final categoryItemCount = <String, int>{};
+    final categoryOrderCount = <String, int>{};
+
+    for (final orderDoc in ordersDocs) {
+      final order = orderDoc.data();
+      final orderTime = _asDate(
+        order['createdAt'] ?? order['paidAt'] ?? order['updatedAt'],
+      );
+      if (!_inRange(orderTime, startInclusive, endExclusive)) continue;
+
+      final items = (order['items'] as List?) ?? const [];
+      final total = (order['total'] is num) ? (order['total'] as num).toDouble() : 0.0;
+      final orderStoreId = (order['storeId'] ?? '').toString().trim().toLowerCase();
+
+      final storeQty = <String, int>{};
+      int totalQty = 0;
+      final categoriesInStoreOrder = <String>{};
+
+      for (final rawItem in items) {
+        if (rawItem is! Map) continue;
+        final item = rawItem;
+        final pid = (item['productId'] ?? '').toString().trim();
+        if (pid.isEmpty) continue;
+
+        final rawQty = item['qty'];
+        int qty = 0;
+        if (rawQty is int) qty = rawQty;
+        if (rawQty is num) qty = rawQty.toInt();
+        if (qty <= 0) qty = 1;
+        totalQty += qty;
+
+        final itemStoreId = (item['storeId'] ?? '').toString().trim().toLowerCase();
+        final candidates = <String>{};
+        if (itemStoreId.isNotEmpty) candidates.add(itemStoreId);
+        candidates.addAll(productStoreIds[pid] ?? const <String>{});
+
+        String targetStoreId = '';
+        if (candidates.length == 1) {
+          targetStoreId = candidates.first;
+        } else if (orderStoreId.isNotEmpty && candidates.contains(orderStoreId)) {
+          targetStoreId = orderStoreId;
+        } else if (orderStoreId.isNotEmpty && candidates.isEmpty) {
+          targetStoreId = orderStoreId;
+        } else if (candidates.isNotEmpty) {
+          final sorted = candidates.toList()..sort();
+          targetStoreId = sorted.first;
+        }
+
+        if (targetStoreId != cleanStoreLower) continue;
+        storeQty[targetStoreId] = (storeQty[targetStoreId] ?? 0) + qty;
+        final category = (productCategoryById[pid] ?? 'Uncategorized').trim();
+        final safeCategory = category.isEmpty ? 'Uncategorized' : category;
+        categoryItemCount[safeCategory] =
+            (categoryItemCount[safeCategory] ?? 0) + qty;
+        categoriesInStoreOrder.add(safeCategory);
+      }
+
+      if (storeQty.isEmpty) continue;
+
+      totalOrders += 1;
+      final qtyForStore = storeQty.values.fold<int>(0, (a, b) => a + b);
+      totalItems += qtyForStore;
+      final revenueShare = (totalQty > 0) ? (total * (qtyForStore / totalQty)) : 0.0;
+      totalRevenue += revenueShare;
+
+      for (final category in categoriesInStoreOrder) {
+        categoryOrderCount[category] = (categoryOrderCount[category] ?? 0) + 1;
+      }
+    }
+
+    final topCategoryStats = <Map<String, dynamic>>[];
+    for (final entry in categoryItemCount.entries) {
+      final category = entry.key;
+      final items = entry.value;
+      final orders = categoryOrderCount[category] ?? 0;
+      topCategoryStats.add({
+        'category': category,
+        'items': items,
+        'orders': orders,
+      });
+    }
+    topCategoryStats.sort((a, b) {
+      final byItems =
+          ((b['items'] as int?) ?? 0).compareTo((a['items'] as int?) ?? 0);
+      if (byItems != 0) return byItems;
+      return ((b['orders'] as int?) ?? 0).compareTo((a['orders'] as int?) ?? 0);
+    });
+
+    final out = {
+      'orders': totalOrders,
+      'items': totalItems,
+      'revenue': totalRevenue,
+      'topCategoryStats': topCategoryStats,
+    };
+    _storeSummaryCache[key] = out;
+    _storeSummaryCacheAt[key] = now;
+    return out;
   }
 
   double _effectivePriceFromRow(Map<String, dynamic> row) {

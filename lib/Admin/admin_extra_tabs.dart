@@ -2736,7 +2736,7 @@ class _ReportsAdminTabState extends State<ReportsAdminTab> {
   Future<List<QueryDocumentSnapshot<Map<String, dynamic>>>>
   _safeOrdersDocs() async {
     try {
-      return await widget.svc.ordersAllForAdmin();
+      return await widget.svc.ordersAllForAdmin(storeId: widget.fixedStoreId);
     } on FirebaseException catch (e) {
       if (e.code == 'permission-denied' || e.code == 'failed-precondition') {
         return const <QueryDocumentSnapshot<Map<String, dynamic>>>[];
@@ -3017,19 +3017,31 @@ class _ReportsAdminTabState extends State<ReportsAdminTab> {
       final categoriesInOrder = <String>{};
       final orderStoreId =
           (order['storeId'] ?? '').toString().trim().toLowerCase();
+      final rawStoreIds = order['storeIds'];
+      final hasMultiStoreRoots = rawStoreIds is List && rawStoreIds.isNotEmpty;
+      final orderStoreIdsLower = <String>{};
+      if (rawStoreIds is List) {
+        for (final raw in rawStoreIds) {
+          final sid = raw.toString().trim().toLowerCase();
+          if (sid.isNotEmpty) orderStoreIdsLower.add(sid);
+        }
+      }
+      bool hasAnyTaggedItemStore = false;
 
       for (final raw in items) {
         if (raw is! Map) continue;
 
         final item = Map<String, dynamic>.from(raw);
 
-        final itemStoreId =
+        final itemStoreIdRaw =
             (item['storeId'] ?? '').toString().trim().toLowerCase();
+        if (itemStoreIdRaw.isNotEmpty) hasAnyTaggedItemStore = true;
+        String effectiveItemStoreId = itemStoreIdRaw;
+        if (effectiveItemStoreId.isEmpty && orderStoreIdsLower.length == 1) {
+          effectiveItemStoreId = orderStoreIdsLower.first;
+        }
         final itemProductId = (item['productId'] ?? '').toString().trim();
-
-        final belongsToThisStore =
-            itemStoreId == cleanStoreIdLower ||
-                (itemStoreId.isEmpty && scopedProductIds.contains(itemProductId));
+        final belongsToThisStore = effectiveItemStoreId == cleanStoreIdLower;
 
         if (!belongsToThisStore) continue;
 
@@ -3077,7 +3089,9 @@ class _ReportsAdminTabState extends State<ReportsAdminTab> {
           categoryOrderCount[category] =
               (categoryOrderCount[category] ?? 0) + 1;
         }
-      } else if (orderStoreId == cleanStoreIdLower) {
+      } else if (orderStoreId == cleanStoreIdLower &&
+          !hasMultiStoreRoots &&
+          !hasAnyTaggedItemStore) {
         // Legacy fallback for old orders missing per-item storeId.
         final total = order['total'];
         if (total is num && total.toDouble() > 0) {
@@ -3130,6 +3144,64 @@ class _ReportsAdminTabState extends State<ReportsAdminTab> {
         (a['orders'] as int?) ?? 0,
       );
     });
+
+    if (scoped) {
+      bool loadedFromCache = false;
+      try {
+        final cacheSnap =
+            await db
+                .collection('stores')
+                .doc(cleanStoreId)
+                .collection('report_cache')
+                .doc(periodCode)
+                .get();
+        final cache = cacheSnap.data() ?? const <String, dynamic>{};
+        final cacheOrders = _asInt(cache['orders'], fallback: 0);
+        final cacheItems = _asInt(cache['orderItems'], fallback: 0);
+        final cacheRevenue = _asDouble(cache['revenue'], fallback: 0.0);
+        final cacheCatsRaw = cache['topCategoryStats'];
+        final cacheCats = <Map<String, dynamic>>[];
+        if (cacheCatsRaw is List) {
+          for (final row in cacheCatsRaw) {
+            if (row is Map) {
+              cacheCats.add(Map<String, dynamic>.from(row));
+            }
+          }
+        }
+        if (cacheOrders > 0 || cacheItems > 0 || cacheRevenue > 0) {
+          totalOrders = cacheOrders;
+          totalOrderItems = cacheItems;
+          totalRevenue = cacheRevenue;
+          topCategoryStats
+            ..clear()
+            ..addAll(cacheCats);
+          ordersInPeriod = totalOrders;
+          loadedFromCache = true;
+        }
+      } on FirebaseException {
+        // Ignore and fallback to live summary.
+      }
+
+      if (!loadedFromCache) {
+        final summary = await widget.svc.storeScopedOrderSummary(
+          storeId: cleanStoreId,
+          startInclusive: start,
+          endExclusive: end,
+        );
+        totalOrders = (summary['orders'] as int?) ?? 0;
+        totalOrderItems = (summary['items'] as int?) ?? 0;
+        totalRevenue = ((summary['revenue'] as num?) ?? 0.0).toDouble();
+        final fromSummary =
+            (summary['topCategoryStats'] as List? ?? const [])
+                .whereType<Map>()
+                .map((e) => Map<String, dynamic>.from(e))
+                .toList();
+        topCategoryStats
+          ..clear()
+          ..addAll(fromSummary);
+        ordersInPeriod = totalOrders;
+      }
+    }
 
     bool usedCache = false;
     if (scoped && totalOrders == 0) {

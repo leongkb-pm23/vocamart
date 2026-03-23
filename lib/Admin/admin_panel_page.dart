@@ -13,7 +13,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:fyp/components/confirm_dialog.dart';
 import 'package:fyp/Admin/firestore_service.dart';
 import 'package:fyp/User/login.dart';
-import 'package:fyp/Admin/admin_extra_tabs.dart';
+import 'package:fyp/Admin/admin_extra_tabs.dart'; 
 
 class AdminPanelPage extends StatefulWidget {
   const AdminPanelPage({super.key});
@@ -645,7 +645,7 @@ class _DashboardTab extends StatelessWidget {
                     height: 148,
                     child: _DashboardCard(
                       title: 'PRICES',
-                      value: '${s['prices']}',
+                      value: '',
                       icon: Icons.attach_money_outlined,
                       iconColor: const Color(0xFF4CAF50),
                       onTap: () => onOpenTab(3),
@@ -740,17 +740,18 @@ class _DashboardCard extends StatelessWidget {
               const Spacer(),
               Icon(icon, color: iconColor, size: 30),
               const Spacer(),
-              Align(
-                alignment: Alignment.bottomRight,
-                child: Text(
-                  value,
-                  style: const TextStyle(
-                    fontSize: 26,
-                    fontWeight: FontWeight.w900,
-                    color: Color(0xFF5F6368),
+              if (value.trim().isNotEmpty)
+                Align(
+                  alignment: Alignment.bottomRight,
+                  child: Text(
+                    value,
+                    style: const TextStyle(
+                      fontSize: 26,
+                      fontWeight: FontWeight.w900,
+                      color: Color(0xFF5F6368),
+                    ),
                   ),
                 ),
-              ),
             ],
           ),
         ),
@@ -2593,11 +2594,23 @@ class _PricesTabState extends State<_PricesTab> {
     }
 
     String storeId =
-        (data?['storeId'] ?? (stores.isNotEmpty ? stores.first['id'] : ''))
+        (widget.fixedStoreId ??
+                data?['storeId'] ??
+                (stores.isNotEmpty ? stores.first['id'] : ''))
             .toString();
     String storeName =
-        (data?['storeName'] ?? (stores.isNotEmpty ? stores.first['name'] : ''))
+        (widget.fixedStoreName ??
+                data?['storeName'] ??
+                (stores.isNotEmpty ? stores.first['name'] : ''))
             .toString();
+
+    if ((widget.fixedStoreId ?? '').trim().isNotEmpty) {
+      storeId = widget.fixedStoreId!.trim();
+      if (storeName.trim().isEmpty) {
+        final found = _storeById(stores, storeId);
+        storeName = found['name'].toString();
+      }
+    }
 
     final priceCtrl = TextEditingController(
       text: (data?['price'] ?? '').toString(),

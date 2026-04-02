@@ -10,7 +10,6 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import 'package:fyp/Admin/firestore_service.dart';
 import 'package:fyp/components/app_store.dart';
 
 // This class defines ProductDetailPage, used for this page/feature.
@@ -384,7 +383,10 @@ class ProductDetailPage extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 18),
-                _ProductReviewsList(productId: liveProduct.id),
+                _ProductReviewsList(
+                  productId: liveProduct.id,
+                  productName: liveProduct.name,
+                ),
               ],
             ),
           ),
@@ -396,13 +398,16 @@ class ProductDetailPage extends StatelessWidget {
 
 class _ProductReviewsList extends StatelessWidget {
   final String productId;
+  final String productName;
 
-  const _ProductReviewsList({required this.productId});
+  const _ProductReviewsList({required this.productId, required this.productName});
+
+  String _norm(String raw) {
+    return raw.trim().toLowerCase();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final svc = FirestoreService();
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -416,24 +421,57 @@ class _ProductReviewsList extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-          stream: svc.reviewsStream(),
+          stream:
+              FirebaseFirestore.instance
+                  .collection('product_reviews')
+                  .where('status', isEqualTo: 'published')
+                  .snapshots(),
           builder: (context, snap) {
+            if (snap.hasError) {
+              return Text(
+                'Unable to load reviews right now: ${snap.error}',
+                style: TextStyle(
+                  color: Colors.black54,
+                  fontWeight: FontWeight.w700,
+                ),
+              );
+            }
             if (!snap.hasData) {
               return const SizedBox.shrink();
             }
 
             final rows = <QueryDocumentSnapshot<Map<String, dynamic>>>[];
+            final targetPid = _norm(productId);
+            final targetName = _norm(productName);
             for (final doc in snap.data!.docs) {
               final data = doc.data();
-              final pid = (data['productId'] ?? '').toString().trim();
-              final status = (data['status'] ?? 'published').toString().trim();
-              if (pid == productId && status == 'published') {
+              final pid = _norm((data['productId'] ?? data['productID'] ?? data['product_id'] ?? '').toString());
+              if (pid == targetPid) {
+                rows.add(doc);
+                continue;
+              }
+              // Legacy fallback when old review docs used inconsistent productId.
+              final reviewName = _norm((data['productName'] ?? data['title'] ?? '').toString());
+              if (reviewName.isNotEmpty && reviewName == targetName) {
                 rows.add(doc);
               }
             }
+            rows.sort((a, b) {
+              DateTime asDate(Object? value) {
+                if (value is Timestamp) return value.toDate();
+                if (value is DateTime) return value;
+                return DateTime.fromMillisecondsSinceEpoch(0);
+              }
+
+              final aData = a.data();
+              final bData = b.data();
+              final aTime = asDate(aData['updatedAt'] ?? aData['createdAt']);
+              final bTime = asDate(bData['updatedAt'] ?? bData['createdAt']);
+              return bTime.compareTo(aTime);
+            });
 
             if (rows.isEmpty) {
-              return const Text('No reviews yet');
+              return Text('No reviews yet for product ID: $productId');
             }
 
             final cards = <Widget>[];
@@ -455,7 +493,8 @@ class _ProductReviewsList extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        (data['userEmail'] ?? 'User').toString(),
+                        (data['userName'] ?? data['userEmail'] ?? 'User')
+                            .toString(),
                         style: const TextStyle(fontWeight: FontWeight.w800),
                       ),
                       Text('Rating: $stars'),

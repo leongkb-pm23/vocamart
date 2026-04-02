@@ -20,6 +20,43 @@ class PurchaseHistoryPage extends StatelessWidget {
 
   String _normalizeStatus(String raw) => raw.trim().toLowerCase();
 
+  bool _isPickedUpByDeliveryMan(OrderItem order) {
+    final s = _normalizeStatus(order.status);
+    final d = _normalizeStatus(order.deliveryStatus);
+    return d == 'on the way' || s == 'to receive' || s == 'shipping';
+  }
+
+  bool _isPacking(OrderItem order) {
+    final s = _normalizeStatus(order.status);
+    final d = _normalizeStatus(order.deliveryStatus);
+    if (_isPickedUpByDeliveryMan(order)) return false;
+    if (s == 'completed' || s == 'delivered' || s == 'cancelled' || s == 'canceled') {
+      return false;
+    }
+    if (d == 'delivered' || d == 'cancelled' || d == 'canceled') return false;
+    return s == 'to ship' ||
+        s == 'packed' ||
+        s == 'pending' ||
+        s == 'processing' ||
+        d == 'assigned';
+  }
+
+  String _statusLabel(OrderItem order) {
+    final s = _normalizeStatus(order.status);
+    if (s == 'packed') return 'PACKED DONE';
+    if (_isPacking(order)) return 'PACKING';
+    if (_isPickedUpByDeliveryMan(order)) return 'PICKED UP BY DELIVERY MAN';
+    return s.isEmpty ? 'TO SHIP' : order.status.toUpperCase();
+  }
+
+  String _deliveryLabel(OrderItem order) {
+    final d = _normalizeStatus(order.deliveryStatus);
+    if (d.isEmpty) return '';
+    if (d == 'on the way') return 'PICKED UP BY DELIVERY MAN';
+    if (d == 'assigned') return 'WAITING FOR PICKUP';
+    return order.deliveryStatus.toUpperCase();
+  }
+
   bool _canReviewOrder(OrderItem order) {
     final s = _normalizeStatus(order.status);
     final d = _normalizeStatus(order.deliveryStatus);
@@ -38,12 +75,12 @@ class PurchaseHistoryPage extends StatelessWidget {
         const SizedBox(height: 4),
         Text('Date: $dateText', style: const TextStyle(color: Colors.black54)),
         Text(
-          'Status: ${order.status}',
+          'Status: ${_statusLabel(order)}',
           style: const TextStyle(fontWeight: FontWeight.w700),
         ),
-        if (order.deliveryStatus.trim().isNotEmpty)
+        if (_deliveryLabel(order).isNotEmpty)
           Text(
-            'Delivery: ${order.deliveryStatus}',
+            'Delivery: ${_deliveryLabel(order)}',
             style: const TextStyle(fontWeight: FontWeight.w700),
           ),
         Text('Items: ${order.items.length}'),

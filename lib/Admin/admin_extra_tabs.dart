@@ -32,11 +32,11 @@ class UsersAdminTab extends StatelessWidget {
   }
 
   Future<bool> _confirm(
-      BuildContext context,
-      String title,
-      String message, {
-        String confirmText = 'Yes',
-      }) async {
+    BuildContext context,
+    String title,
+    String message, {
+    String confirmText = 'Yes',
+  }) async {
     return showConfirmDialog(
       context,
       title: title,
@@ -59,14 +59,14 @@ class UsersAdminTab extends StatelessWidget {
   }
 
   Future<void> _setRole(
-      BuildContext context,
-      String userId,
-      Map<String, dynamic> data,
-      String newRole,
-      ) async {
+    BuildContext context,
+    String userId,
+    Map<String, dynamic> data,
+    String newRole,
+  ) async {
     final name =
-    (data['name'] ?? data['displayName'] ?? data['email'] ?? userId)
-        .toString();
+        (data['name'] ?? data['displayName'] ?? data['email'] ?? userId)
+            .toString();
 
     final ok = await _confirm(
       context,
@@ -141,14 +141,14 @@ class UsersAdminTab extends StatelessWidget {
   }
 
   Future<void> _toggleBlocked(
-      BuildContext context,
-      String userId,
-      Map<String, dynamic> data,
-      ) async {
+    BuildContext context,
+    String userId,
+    Map<String, dynamic> data,
+  ) async {
     final blocked = (data['blocked'] ?? false) == true;
     final name =
-    (data['name'] ?? data['displayName'] ?? data['email'] ?? userId)
-        .toString();
+        (data['name'] ?? data['displayName'] ?? data['email'] ?? userId)
+            .toString();
 
     final ok = await _confirm(
       context,
@@ -187,10 +187,10 @@ class UsersAdminTab extends StatelessWidget {
   }
 
   Future<void> _addOrEditUser(
-      BuildContext context, {
-        String? userId,
-        Map<String, dynamic>? data,
-      }) async {
+    BuildContext context, {
+    String? userId,
+    Map<String, dynamic>? data,
+  }) async {
     final formKey = GlobalKey<FormState>();
     final isAddMode = userId == null;
     final nameCtrl = TextEditingController(
@@ -266,7 +266,7 @@ class UsersAdminTab extends StatelessWidget {
       int age = today.year - value.year;
       final hadBirthday =
           (today.month > value.month) ||
-              (today.month == value.month && today.day >= value.day);
+          (today.month == value.month && today.day >= value.day);
       if (!hadBirthday) age--;
       return age;
     }
@@ -404,11 +404,11 @@ class UsersAdminTab extends StatelessWidget {
                                   final now = DateTime.now();
                                   final initial =
                                       dob ??
-                                          DateTime(
-                                            now.year - 18,
-                                            now.month,
-                                            now.day,
-                                          );
+                                      DateTime(
+                                        now.year - 18,
+                                        now.month,
+                                        now.day,
+                                      );
                                   final picked = await showDatePicker(
                                     context: dialogContext,
                                     initialDate: initial,
@@ -425,7 +425,7 @@ class UsersAdminTab extends StatelessWidget {
                                     labelText: 'Date of Birth',
                                     border: const OutlineInputBorder(),
                                     errorText:
-                                    hasError ? field.errorText : null,
+                                        hasError ? field.errorText : null,
                                   ),
                                   child: Text(
                                     dob == null
@@ -511,7 +511,7 @@ class UsersAdminTab extends StatelessWidget {
                             suffixIcon: IconButton(
                               onPressed: () {
                                 setDialogState(
-                                      () => obscureConfirm = !obscureConfirm,
+                                  () => obscureConfirm = !obscureConfirm,
                                 );
                               },
                               icon: Icon(
@@ -610,240 +610,240 @@ class UsersAdminTab extends StatelessWidget {
                 ),
                 ElevatedButton(
                   onPressed:
-                  !saving
-                      ? () async {
-                    if (!formKey.currentState!.validate()) return;
-                    if ((phoneE164).trim().isEmpty) {
-                      setDialogState(() {
-                        errorText = 'Phone number is required';
-                      });
-                      return;
-                    }
-                    if (isAddMode && !pwAllOk(passwordCtrl.text)) {
-                      setDialogState(() {
-                        errorText =
-                        'Password does not meet the requirements.';
-                      });
-                      return;
-                    }
-                    if (gender.isEmpty) {
-                      setDialogState(() {
-                        errorText = 'Gender is required';
-                      });
-                      return;
-                    }
-                    if (dob == null) {
-                      setDialogState(() {
-                        errorText = 'Date of birth is required';
-                      });
-                      return;
-                    }
-                    if (ageFromDob(dob!) < 18) {
-                      setDialogState(() {
-                        errorText = 'You must be at least 18 years old';
-                      });
-                      return;
-                    }
+                      !saving
+                          ? () async {
+                            if (!formKey.currentState!.validate()) return;
+                            if ((phoneE164).trim().isEmpty) {
+                              setDialogState(() {
+                                errorText = 'Phone number is required';
+                              });
+                              return;
+                            }
+                            if (isAddMode && !pwAllOk(passwordCtrl.text)) {
+                              setDialogState(() {
+                                errorText =
+                                    'Password does not meet the requirements.';
+                              });
+                              return;
+                            }
+                            if (gender.isEmpty) {
+                              setDialogState(() {
+                                errorText = 'Gender is required';
+                              });
+                              return;
+                            }
+                            if (dob == null) {
+                              setDialogState(() {
+                                errorText = 'Date of birth is required';
+                              });
+                              return;
+                            }
+                            if (ageFromDob(dob!) < 18) {
+                              setDialogState(() {
+                                errorText = 'You must be at least 18 years old';
+                              });
+                              return;
+                            }
 
-                    setDialogState(() {
-                      saving = true;
-                      errorText = null;
-                    });
+                            setDialogState(() {
+                              saving = true;
+                              errorText = null;
+                            });
 
-                    FirebaseApp? secondaryApp;
-                    FirebaseAuth? secondaryAuth;
-                    User? createdAuthUser;
-                    try {
-                      final users = FirebaseFirestore.instance
-                          .collection('users');
-                      late final DocumentReference<Map<String, dynamic>>
-                      docRef;
+                            FirebaseApp? secondaryApp;
+                            FirebaseAuth? secondaryAuth;
+                            User? createdAuthUser;
+                            try {
+                              final users = FirebaseFirestore.instance
+                                  .collection('users');
+                              late final DocumentReference<Map<String, dynamic>>
+                              docRef;
 
-                      if (isAddMode) {
-                        final appName =
-                            'admin_create_user_${DateTime.now().millisecondsSinceEpoch}';
-                        secondaryApp = await Firebase.initializeApp(
-                          name: appName,
-                          options: Firebase.app().options,
-                        );
-                        secondaryAuth = FirebaseAuth.instanceFor(
-                          app: secondaryApp,
-                        );
-                        final cred = await secondaryAuth
-                            .createUserWithEmailAndPassword(
-                          email:
-                          emailCtrl.text.trim().toLowerCase(),
-                          password: passwordCtrl.text,
-                        );
-                        createdAuthUser = cred.user;
-                        docRef = users.doc(cred.user!.uid);
-                      } else {
-                        docRef = users.doc(userId);
-                      }
+                              if (isAddMode) {
+                                final appName =
+                                    'admin_create_user_${DateTime.now().millisecondsSinceEpoch}';
+                                secondaryApp = await Firebase.initializeApp(
+                                  name: appName,
+                                  options: Firebase.app().options,
+                                );
+                                secondaryAuth = FirebaseAuth.instanceFor(
+                                  app: secondaryApp,
+                                );
+                                final cred = await secondaryAuth
+                                    .createUserWithEmailAndPassword(
+                                      email:
+                                          emailCtrl.text.trim().toLowerCase(),
+                                      password: passwordCtrl.text,
+                                    );
+                                createdAuthUser = cred.user;
+                                docRef = users.doc(cred.user!.uid);
+                              } else {
+                                docRef = users.doc(userId);
+                              }
 
-                      final payload = <String, dynamic>{
-                        'uid': docRef.id,
-                        'userId': docRef.id,
-                        'name': nameCtrl.text.trim(),
-                        'fullName': nameCtrl.text.trim(),
-                        'displayName': nameCtrl.text.trim(),
-                        'email': emailCtrl.text.trim().toLowerCase(),
-                        'phone': phoneE164.trim(),
-                        'address': addressCtrl.text.trim(),
-                        'gender': gender,
-                        'dob': Timestamp.fromDate(dob!),
-                        'role': role,
-                        'blocked': blocked,
-                        'deliveryOnDuty':
-                        role == 'delivery' ? onDuty : false,
-                        'updatedAt': FieldValue.serverTimestamp(),
-                        if (isAddMode)
-                          'createdAt': FieldValue.serverTimestamp(),
-                      };
+                              final payload = <String, dynamic>{
+                                'uid': docRef.id,
+                                'userId': docRef.id,
+                                'name': nameCtrl.text.trim(),
+                                'fullName': nameCtrl.text.trim(),
+                                'displayName': nameCtrl.text.trim(),
+                                'email': emailCtrl.text.trim().toLowerCase(),
+                                'phone': phoneE164.trim(),
+                                'address': addressCtrl.text.trim(),
+                                'gender': gender,
+                                'dob': Timestamp.fromDate(dob!),
+                                'role': role,
+                                'blocked': blocked,
+                                'deliveryOnDuty':
+                                    role == 'delivery' ? onDuty : false,
+                                'updatedAt': FieldValue.serverTimestamp(),
+                                if (isAddMode)
+                                  'createdAt': FieldValue.serverTimestamp(),
+                              };
 
-                      await docRef.set(
-                        payload,
-                        SetOptions(merge: true),
-                      );
+                              await docRef.set(
+                                payload,
+                                SetOptions(merge: true),
+                              );
 
-                      final db = FirebaseFirestore.instance;
-                      final adminRef = db
-                          .collection('admins')
-                          .doc(docRef.id);
-                      final superRef = db
-                          .collection('super_admins')
-                          .doc(docRef.id);
-                      final deliveryRef = db
-                          .collection('delivery_staff')
-                          .doc(docRef.id);
+                              final db = FirebaseFirestore.instance;
+                              final adminRef = db
+                                  .collection('admins')
+                                  .doc(docRef.id);
+                              final superRef = db
+                                  .collection('super_admins')
+                                  .doc(docRef.id);
+                              final deliveryRef = db
+                                  .collection('delivery_staff')
+                                  .doc(docRef.id);
 
-                      if (role == 'super_admin') {
-                        await superRef.set({
-                          'email': emailCtrl.text.trim().toLowerCase(),
-                          'name': nameCtrl.text.trim(),
-                          'updatedAt': FieldValue.serverTimestamp(),
-                        }, SetOptions(merge: true));
-                        try {
-                          await adminRef.delete();
-                        } catch (_) {}
-                        try {
-                          await deliveryRef.delete();
-                        } catch (_) {}
-                      } else if (role == 'admin') {
-                        await adminRef.set({
-                          'email': emailCtrl.text.trim().toLowerCase(),
-                          'name': nameCtrl.text.trim(),
-                          'updatedAt': FieldValue.serverTimestamp(),
-                        }, SetOptions(merge: true));
-                        try {
-                          await superRef.delete();
-                        } catch (_) {}
-                        try {
-                          await deliveryRef.delete();
-                        } catch (_) {}
-                      } else if (role == 'delivery') {
-                        await deliveryRef.set({
-                          'email': emailCtrl.text.trim().toLowerCase(),
-                          'name': nameCtrl.text.trim(),
-                          'enabled': true,
-                          'deliveryOnDuty': onDuty,
-                          'updatedAt': FieldValue.serverTimestamp(),
-                        }, SetOptions(merge: true));
-                        try {
-                          await superRef.delete();
-                        } catch (_) {}
-                        try {
-                          await adminRef.delete();
-                        } catch (_) {}
-                      } else {
-                        try {
-                          await superRef.delete();
-                        } catch (_) {}
-                        try {
-                          await adminRef.delete();
-                        } catch (_) {}
-                        try {
-                          await deliveryRef.delete();
-                        } catch (_) {}
-                      }
+                              if (role == 'super_admin') {
+                                await superRef.set({
+                                  'email': emailCtrl.text.trim().toLowerCase(),
+                                  'name': nameCtrl.text.trim(),
+                                  'updatedAt': FieldValue.serverTimestamp(),
+                                }, SetOptions(merge: true));
+                                try {
+                                  await adminRef.delete();
+                                } catch (_) {}
+                                try {
+                                  await deliveryRef.delete();
+                                } catch (_) {}
+                              } else if (role == 'admin') {
+                                await adminRef.set({
+                                  'email': emailCtrl.text.trim().toLowerCase(),
+                                  'name': nameCtrl.text.trim(),
+                                  'updatedAt': FieldValue.serverTimestamp(),
+                                }, SetOptions(merge: true));
+                                try {
+                                  await superRef.delete();
+                                } catch (_) {}
+                                try {
+                                  await deliveryRef.delete();
+                                } catch (_) {}
+                              } else if (role == 'delivery') {
+                                await deliveryRef.set({
+                                  'email': emailCtrl.text.trim().toLowerCase(),
+                                  'name': nameCtrl.text.trim(),
+                                  'enabled': true,
+                                  'deliveryOnDuty': onDuty,
+                                  'updatedAt': FieldValue.serverTimestamp(),
+                                }, SetOptions(merge: true));
+                                try {
+                                  await superRef.delete();
+                                } catch (_) {}
+                                try {
+                                  await adminRef.delete();
+                                } catch (_) {}
+                              } else {
+                                try {
+                                  await superRef.delete();
+                                } catch (_) {}
+                                try {
+                                  await adminRef.delete();
+                                } catch (_) {}
+                                try {
+                                  await deliveryRef.delete();
+                                } catch (_) {}
+                              }
 
-                      if (isAddMode) {
-                        await secondaryAuth?.signOut();
-                        await secondaryApp?.delete();
-                      }
-                      if (!context.mounted) return;
-                      Navigator.pop(dialogContext);
-                      _showMsg(
-                        context,
-                        userId == null
-                            ? 'User added successfully.'
-                            : 'User updated successfully.',
-                      );
-                    } on FirebaseAuthException catch (e) {
-                      if (isAddMode) {
-                        try {
-                          await secondaryAuth?.signOut();
-                        } catch (_) {}
-                        try {
-                          await secondaryApp?.delete();
-                        } catch (_) {}
-                      }
-                      String msg = 'Registration failed.';
-                      if (e.code == 'email-already-in-use') {
-                        msg = 'This email is already registered.';
-                      } else if (e.code == 'invalid-email') {
-                        msg = 'Invalid email format.';
-                      } else if (e.code == 'weak-password') {
-                        msg = 'Password too weak.';
-                      } else if (e.message != null &&
-                          e.message!.trim().isNotEmpty) {
-                        msg = e.message!;
-                      }
-                      setDialogState(() {
-                        saving = false;
-                        errorText = msg;
-                      });
-                    } on FirebaseException catch (e) {
-                      if (isAddMode && e.code == 'permission-denied') {
-                        try {
-                          await createdAuthUser?.delete();
-                        } catch (_) {}
-                      }
-                      if (isAddMode) {
-                        try {
-                          await secondaryAuth?.signOut();
-                        } catch (_) {}
-                        try {
-                          await secondaryApp?.delete();
-                        } catch (_) {}
-                      }
-                      setDialogState(() {
-                        saving = false;
-                        if (e.code == 'permission-denied') {
-                          errorText =
-                          'Save blocked by Firestore rules. '
-                              'Your admin account is missing write permission for users/{uid}.';
-                        } else {
-                          errorText =
-                          'Save failed: ${e.message ?? e.code}';
-                        }
-                      });
-                    } catch (e) {
-                      if (isAddMode) {
-                        try {
-                          await secondaryAuth?.signOut();
-                        } catch (_) {}
-                        try {
-                          await secondaryApp?.delete();
-                        } catch (_) {}
-                      }
-                      setDialogState(() {
-                        saving = false;
-                        errorText = 'Save failed: $e';
-                      });
-                    }
-                  }
-                      : null,
+                              if (isAddMode) {
+                                await secondaryAuth?.signOut();
+                                await secondaryApp?.delete();
+                              }
+                              if (!context.mounted) return;
+                              Navigator.pop(dialogContext);
+                              _showMsg(
+                                context,
+                                userId == null
+                                    ? 'User added successfully.'
+                                    : 'User updated successfully.',
+                              );
+                            } on FirebaseAuthException catch (e) {
+                              if (isAddMode) {
+                                try {
+                                  await secondaryAuth?.signOut();
+                                } catch (_) {}
+                                try {
+                                  await secondaryApp?.delete();
+                                } catch (_) {}
+                              }
+                              String msg = 'Registration failed.';
+                              if (e.code == 'email-already-in-use') {
+                                msg = 'This email is already registered.';
+                              } else if (e.code == 'invalid-email') {
+                                msg = 'Invalid email format.';
+                              } else if (e.code == 'weak-password') {
+                                msg = 'Password too weak.';
+                              } else if (e.message != null &&
+                                  e.message!.trim().isNotEmpty) {
+                                msg = e.message!;
+                              }
+                              setDialogState(() {
+                                saving = false;
+                                errorText = msg;
+                              });
+                            } on FirebaseException catch (e) {
+                              if (isAddMode && e.code == 'permission-denied') {
+                                try {
+                                  await createdAuthUser?.delete();
+                                } catch (_) {}
+                              }
+                              if (isAddMode) {
+                                try {
+                                  await secondaryAuth?.signOut();
+                                } catch (_) {}
+                                try {
+                                  await secondaryApp?.delete();
+                                } catch (_) {}
+                              }
+                              setDialogState(() {
+                                saving = false;
+                                if (e.code == 'permission-denied') {
+                                  errorText =
+                                      'Save blocked by Firestore rules. '
+                                      'Your admin account is missing write permission for users/{uid}.';
+                                } else {
+                                  errorText =
+                                      'Save failed: ${e.message ?? e.code}';
+                                }
+                              });
+                            } catch (e) {
+                              if (isAddMode) {
+                                try {
+                                  await secondaryAuth?.signOut();
+                                } catch (_) {}
+                                try {
+                                  await secondaryApp?.delete();
+                                } catch (_) {}
+                              }
+                              setDialogState(() {
+                                saving = false;
+                                errorText = 'Save failed: $e';
+                              });
+                            }
+                          }
+                          : null,
                   child: Text(userId == null ? 'Add' : 'Save'),
                 ),
               ],
@@ -858,10 +858,10 @@ class UsersAdminTab extends StatelessWidget {
   Widget build(BuildContext context) {
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream:
-      FirebaseFirestore.instance
-          .collection('users')
-          .orderBy('createdAt', descending: true)
-          .snapshots(),
+          FirebaseFirestore.instance
+              .collection('users')
+              .orderBy('createdAt', descending: true)
+              .snapshots(),
       builder: (context, snap) {
         if (snap.hasError) return _streamError(snap.error);
         if (!snap.hasData) {
@@ -891,138 +891,138 @@ class UsersAdminTab extends StatelessWidget {
               const SizedBox(height: 10),
               Expanded(
                 child:
-                docs.isEmpty
-                    ? const Center(
-                  child: Text(
-                    'No users yet',
-                    style: TextStyle(fontWeight: FontWeight.w800),
-                  ),
-                )
-                    : ListView.separated(
-                  itemCount: docs.length,
-                  separatorBuilder:
-                      (_, __) => const SizedBox(height: 10),
-                  itemBuilder: (_, i) {
-                    final d = docs[i];
-                    final data = d.data();
-                    final role =
-                    (data['role'] ?? 'user').toString().trim();
-                    final blocked = (data['blocked'] ?? false) == true;
-                    final onDuty =
-                        (data['deliveryOnDuty'] ?? true) == true;
+                    docs.isEmpty
+                        ? const Center(
+                          child: Text(
+                            'No users yet',
+                            style: TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                        )
+                        : ListView.separated(
+                          itemCount: docs.length,
+                          separatorBuilder:
+                              (_, __) => const SizedBox(height: 10),
+                          itemBuilder: (_, i) {
+                            final d = docs[i];
+                            final data = d.data();
+                            final role =
+                                (data['role'] ?? 'user').toString().trim();
+                            final blocked = (data['blocked'] ?? false) == true;
+                            final onDuty =
+                                (data['deliveryOnDuty'] ?? true) == true;
 
-                    return Container(
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF7FAFF),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: const Color(0xFFE6E6E6),
-                        ),
-                      ),
-                      child: ListTile(
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 8,
-                        ),
-                        leading: CircleAvatar(
-                          backgroundColor:
-                          blocked
-                              ? const Color(0xFFFFEBEE)
-                              : const Color(0xFFE3F2FD),
-                          foregroundColor:
-                          blocked
-                              ? const Color(0xFFD32F2F)
-                              : const Color(0xFF1565C0),
-                          child: Icon(
-                            blocked
-                                ? Icons.block_outlined
-                                : Icons.person_outline,
-                          ),
-                        ),
-                        title: Text(
-                          _nameOf(data, d.id),
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
-                        subtitle: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            if (_emailOf(data).isNotEmpty)
-                              Text(_emailOf(data)),
-                            const SizedBox(height: 4),
-                            Wrap(
-                              spacing: 8,
-                              runSpacing: 6,
-                              children: [
-                                _chip('Role: $role'),
-                                if (role == 'delivery')
-                                  _chip(
-                                    onDuty ? 'On Duty' : 'Off Duty',
-                                  ),
-                                _chip(blocked ? 'Blocked' : 'Active'),
-                              ],
-                            ),
-                          ],
-                        ),
-                        trailing: PopupMenuButton<String>(
-                          onSelected: (value) async {
-                            if (value == 'edit') {
-                              await _addOrEditUser(
-                                context,
-                                userId: d.id,
-                                data: data,
-                              );
-                            } else if (value == 'user' ||
-                                value == 'admin' ||
-                                value == 'super_admin' ||
-                                value == 'delivery') {
-                              await _setRole(
-                                context,
-                                d.id,
-                                data,
-                                value,
-                              );
-                            } else if (value == 'block') {
-                              await _toggleBlocked(context, d.id, data);
-                            }
-                          },
-                          itemBuilder:
-                              (_) => [
-                            const PopupMenuItem(
-                              value: 'edit',
-                              child: Text('Edit User'),
-                            ),
-                            const PopupMenuItem(
-                              value: 'user',
-                              child: Text('Set as User'),
-                            ),
-                            const PopupMenuItem(
-                              value: 'admin',
-                              child: Text('Set as Store Admin'),
-                            ),
-                            const PopupMenuItem(
-                              value: 'super_admin',
-                              child: Text('Set as Super Admin'),
-                            ),
-                            const PopupMenuItem(
-                              value: 'delivery',
-                              child: Text('Set as Delivery'),
-                            ),
-                            PopupMenuItem(
-                              value: 'block',
-                              child: Text(
-                                blocked
-                                    ? 'Unblock User'
-                                    : 'Block User',
+                            return Container(
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF7FAFF),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: const Color(0xFFE6E6E6),
+                                ),
                               ),
-                            ),
-                          ],
+                              child: ListTile(
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 14,
+                                  vertical: 8,
+                                ),
+                                leading: CircleAvatar(
+                                  backgroundColor:
+                                      blocked
+                                          ? const Color(0xFFFFEBEE)
+                                          : const Color(0xFFE3F2FD),
+                                  foregroundColor:
+                                      blocked
+                                          ? const Color(0xFFD32F2F)
+                                          : const Color(0xFF1565C0),
+                                  child: Icon(
+                                    blocked
+                                        ? Icons.block_outlined
+                                        : Icons.person_outline,
+                                  ),
+                                ),
+                                title: Text(
+                                  _nameOf(data, d.id),
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                                subtitle: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    if (_emailOf(data).isNotEmpty)
+                                      Text(_emailOf(data)),
+                                    const SizedBox(height: 4),
+                                    Wrap(
+                                      spacing: 8,
+                                      runSpacing: 6,
+                                      children: [
+                                        _chip('Role: $role'),
+                                        if (role == 'delivery')
+                                          _chip(
+                                            onDuty ? 'On Duty' : 'Off Duty',
+                                          ),
+                                        _chip(blocked ? 'Blocked' : 'Active'),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                                trailing: PopupMenuButton<String>(
+                                  onSelected: (value) async {
+                                    if (value == 'edit') {
+                                      await _addOrEditUser(
+                                        context,
+                                        userId: d.id,
+                                        data: data,
+                                      );
+                                    } else if (value == 'user' ||
+                                        value == 'admin' ||
+                                        value == 'super_admin' ||
+                                        value == 'delivery') {
+                                      await _setRole(
+                                        context,
+                                        d.id,
+                                        data,
+                                        value,
+                                      );
+                                    } else if (value == 'block') {
+                                      await _toggleBlocked(context, d.id, data);
+                                    }
+                                  },
+                                  itemBuilder:
+                                      (_) => [
+                                        const PopupMenuItem(
+                                          value: 'edit',
+                                          child: Text('Edit User'),
+                                        ),
+                                        const PopupMenuItem(
+                                          value: 'user',
+                                          child: Text('Set as User'),
+                                        ),
+                                        const PopupMenuItem(
+                                          value: 'admin',
+                                          child: Text('Set as Store Admin'),
+                                        ),
+                                        const PopupMenuItem(
+                                          value: 'super_admin',
+                                          child: Text('Set as Super Admin'),
+                                        ),
+                                        const PopupMenuItem(
+                                          value: 'delivery',
+                                          child: Text('Set as Delivery'),
+                                        ),
+                                        PopupMenuItem(
+                                          value: 'block',
+                                          child: Text(
+                                            blocked
+                                                ? 'Unblock User'
+                                                : 'Block User',
+                                          ),
+                                        ),
+                                      ],
+                                ),
+                              ),
+                            );
+                          },
                         ),
-                      ),
-                    );
-                  },
-                ),
               ),
             ],
           ),
@@ -1035,10 +1035,12 @@ class UsersAdminTab extends StatelessWidget {
 class OrdersAdminTab extends StatefulWidget {
   final FirestoreService svc;
   final bool canAssignDelivery;
+  final String? fixedStoreId;
   const OrdersAdminTab({
     super.key,
     required this.svc,
     this.canAssignDelivery = true,
+    this.fixedStoreId,
   });
 
   @override
@@ -1047,13 +1049,63 @@ class OrdersAdminTab extends StatefulWidget {
 
 class _OrdersAdminTabState extends State<OrdersAdminTab> {
   String _statusFilter = 'all';
+  bool _loading = true;
+  List<QueryDocumentSnapshot<Map<String, dynamic>>> _orders = [];
+  Map<String, String> _productNameById = const {};
+
+  String get _scopedStoreId => (widget.fixedStoreId ?? '').trim();
+
+  @override
+  void initState() {
+    super.initState();
+    if (_scopedStoreId.isNotEmpty) {
+      _statusFilter = 'pending_pack';
+    }
+    _loadProductNames();
+    _loadOrders();
+  }
+
+  @override
+  void didUpdateWidget(covariant OrdersAdminTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final oldStoreId = (oldWidget.fixedStoreId ?? '').trim();
+    if (oldStoreId != _scopedStoreId) {
+      if (_scopedStoreId.isNotEmpty) {
+        _statusFilter = 'pending_pack';
+      } else if (_statusFilter == 'pending_pack') {
+        _statusFilter = 'all';
+      }
+      _loadOrders();
+    }
+  }
+
+  Future<void> _loadOrders() async {
+    if (mounted) {
+      setState(() => _loading = true);
+    }
+    try {
+      final loaded = await widget.svc.ordersAllForAdmin(
+        forceRefresh: true,
+        storeId: _scopedStoreId,
+      );
+      if (!mounted) return;
+      setState(() => _orders = loaded);
+    } on FirebaseException {
+      if (!mounted) return;
+      setState(() => _orders = []);
+    } finally {
+      if (mounted) {
+        setState(() => _loading = false);
+      }
+    }
+  }
 
   Future<bool> _confirm(
-      BuildContext context,
-      String title,
-      String message, {
-        String confirmText = 'Yes',
-      }) async {
+    BuildContext context,
+    String title,
+    String message, {
+    String confirmText = 'Yes',
+  }) async {
     return showConfirmDialog(
       context,
       title: title,
@@ -1081,9 +1133,8 @@ class _OrdersAdminTabState extends State<OrdersAdminTab> {
     );
   }
 
-  Stream<QuerySnapshot<Map<String, dynamic>>> _ordersStream() {
-    return FirebaseFirestore.instance.collectionGroup('orders').snapshots();
-  }
+  Stream<QuerySnapshot<Map<String, dynamic>>> _ordersStream() =>
+      widget.svc.ordersAllStream();
 
   Stream<QuerySnapshot<Map<String, dynamic>>> _deliveryUsersStream() {
     return FirebaseFirestore.instance
@@ -1092,11 +1143,29 @@ class _OrdersAdminTabState extends State<OrdersAdminTab> {
         .snapshots();
   }
 
+  Future<void> _loadProductNames() async {
+    try {
+      final snap = await FirebaseFirestore.instance.collection('products').get();
+      final byId = <String, String>{};
+      for (final doc in snap.docs) {
+        final data = doc.data();
+        final name = (data['name'] ?? '').toString().trim();
+        if (name.isNotEmpty) {
+          byId[doc.id] = name;
+        }
+      }
+      if (!mounted) return;
+      setState(() => _productNameById = byId);
+    } on FirebaseException {
+      // Keep UI functional; item-level names may still be available.
+    }
+  }
+
   Future<void> _updateStatus(
-      BuildContext context,
-      DocumentReference<Map<String, dynamic>> ref,
-      String newStatus,
-      ) async {
+    BuildContext context,
+    DocumentReference<Map<String, dynamic>> ref,
+    String newStatus,
+  ) async {
     final ok = await _confirm(
       context,
       'Update Order Status',
@@ -1114,6 +1183,7 @@ class _OrdersAdminTabState extends State<OrdersAdminTab> {
       if (context.mounted) {
         _showMsg(context, 'Order status updated.');
       }
+      await _loadOrders();
     } on FirebaseException catch (e) {
       if (context.mounted) {
         _showMsg(context, 'Update failed: ${e.message ?? e.code}');
@@ -1124,18 +1194,18 @@ class _OrdersAdminTabState extends State<OrdersAdminTab> {
   }
 
   Future<void> _assignDelivery(
-      BuildContext context,
-      DocumentReference<Map<String, dynamic>> orderRef,
-      String? currentDeliveryId,
-      ) async {
+    BuildContext context,
+    DocumentReference<Map<String, dynamic>> orderRef,
+    String? currentDeliveryId,
+  ) async {
     final deliverySnap = await _deliveryUsersStream().first;
     if (!context.mounted) return;
 
     final docs = deliverySnap.docs;
     final available =
-    docs
-        .where((e) => (e.data()['deliveryOnDuty'] ?? true) == true)
-        .toList();
+        docs
+            .where((e) => (e.data()['deliveryOnDuty'] ?? true) == true)
+            .toList();
 
     if (available.isEmpty) {
       _showMsg(
@@ -1172,20 +1242,20 @@ class _OrdersAdminTabState extends State<OrdersAdminTab> {
                         labelText: 'Delivery Staff',
                       ),
                       items:
-                      available
-                          .map(
-                            (e) => DropdownMenuItem<String>(
-                          value: e.id,
-                          child: Text(
-                            ((e.data()['name'] ??
-                                e.data()['displayName'] ??
-                                e.data()['email'] ??
-                                e.id))
-                                .toString(),
-                          ),
-                        ),
-                      )
-                          .toList(),
+                          available
+                              .map(
+                                (e) => DropdownMenuItem<String>(
+                                  value: e.id,
+                                  child: Text(
+                                    ((e.data()['name'] ??
+                                            e.data()['displayName'] ??
+                                            e.data()['email'] ??
+                                            e.id))
+                                        .toString(),
+                                  ),
+                                ),
+                              )
+                              .toList(),
                       onChanged: (v) {
                         setDialogState(() {
                           selectedId = v;
@@ -1223,16 +1293,16 @@ class _OrdersAdminTabState extends State<OrdersAdminTab> {
                     }
 
                     final picked = available.firstWhere(
-                          (e) => e.id == selectedId,
+                      (e) => e.id == selectedId,
                     );
                     final staffName =
-                    (picked.data()['name'] ??
-                        picked.data()['displayName'] ??
-                        picked.data()['email'] ??
-                        picked.id)
-                        .toString();
+                        (picked.data()['name'] ??
+                                picked.data()['displayName'] ??
+                                picked.data()['email'] ??
+                                picked.id)
+                            .toString();
                     final staffEmail =
-                    (picked.data()['email'] ?? '').toString().trim();
+                        (picked.data()['email'] ?? '').toString().trim();
 
                     try {
                       // Use service flow so writes go to allowed path:
@@ -1254,6 +1324,7 @@ class _OrdersAdminTabState extends State<OrdersAdminTab> {
                         Navigator.pop(dialogContext);
                         _showMsg(context, 'Delivery staff assigned.');
                       }
+                      await _loadOrders();
                     } on FirebaseException catch (e) {
                       if (context.mounted) {
                         _showMsg(
@@ -1289,14 +1360,252 @@ class _OrdersAdminTabState extends State<OrdersAdminTab> {
     return DateTime.fromMillisecondsSinceEpoch(0);
   }
 
+  List<QueryDocumentSnapshot<Map<String, dynamic>>> _sortedOrders(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> input,
+  ) {
+    final out = [...input];
+    out.sort((a, b) {
+      final ad = _asDate(a.data()['createdAt']);
+      final bd = _asDate(b.data()['createdAt']);
+      final c = bd.compareTo(ad);
+      if (c != 0) return c;
+      return b.id.compareTo(a.id);
+    });
+    return out;
+  }
+
+  List<Map<String, dynamic>> _orderItems(Map<String, dynamic> order) {
+    final raw = order['items'];
+    if (raw is! List) return const [];
+    final out = <Map<String, dynamic>>[];
+    for (final item in raw) {
+      if (item is Map) out.add(Map<String, dynamic>.from(item));
+    }
+    return out;
+  }
+
+  int _qtyOf(Map<String, dynamic> item) {
+    final raw = item['qty'];
+    if (raw is int) return raw > 0 ? raw : 1;
+    if (raw is num) {
+      final v = raw.toInt();
+      return v > 0 ? v : 1;
+    }
+    return 1;
+  }
+
+  String _productNameOf(Map<String, dynamic> item) {
+    final direct =
+        (item['productName'] ??
+                item['name'] ??
+                item['productTitle'] ??
+                item['title'] ??
+                '')
+            .toString()
+            .trim();
+    if (direct.isNotEmpty) return direct;
+
+    final pid = (item['productId'] ?? '').toString().trim();
+    if (pid.isEmpty) return '-';
+
+    final fromLookup = (_productNameById[pid] ?? '').trim();
+    if (fromLookup.isNotEmpty) return fromLookup;
+    return pid;
+  }
+
+  Set<String> _orderStoreIds(Map<String, dynamic> order) {
+    final out = <String>{};
+    final items = _orderItems(order);
+    for (final item in items) {
+      final sid = (item['storeId'] ?? '').toString().trim();
+      if (sid.isNotEmpty) out.add(sid);
+    }
+    final rawStoreIds = order['storeIds'];
+    if (rawStoreIds is List) {
+      for (final sid in rawStoreIds) {
+        final clean = sid.toString().trim();
+        if (clean.isNotEmpty) out.add(clean);
+      }
+    }
+    final orderStoreId = (order['storeId'] ?? '').toString().trim();
+    if (orderStoreId.isNotEmpty) out.add(orderStoreId);
+    return out;
+  }
+
+  bool _orderContainsStore(Map<String, dynamic> order, String storeId) {
+    if (storeId.isEmpty) return true;
+    final clean = storeId.trim();
+    if (clean.isEmpty) return true;
+    return _orderStoreIds(order).contains(clean);
+  }
+
+  List<Map<String, dynamic>> _storeItems(
+    Map<String, dynamic> order,
+    String storeId,
+  ) {
+    final clean = storeId.trim();
+    final items = _orderItems(order);
+    if (clean.isEmpty) return items;
+
+    final matched =
+        items.where((item) {
+          final sid = (item['storeId'] ?? '').toString().trim();
+          return sid == clean;
+        }).toList();
+    if (matched.isNotEmpty) return matched;
+
+    final orderStoreId = (order['storeId'] ?? '').toString().trim();
+    if (orderStoreId == clean) {
+      return items;
+    }
+    return const [];
+  }
+
+  String _packStatusForStore(Map<String, dynamic> order, String storeId) {
+    final clean = storeId.trim();
+    if (clean.isEmpty) return 'Pending';
+    final rawMap = order['storePackStatusByStore'];
+    if (rawMap is Map) {
+      final v = rawMap[clean];
+      final text = (v ?? '').toString().trim();
+      if (text.isNotEmpty) return text;
+    }
+    return 'Pending';
+  }
+
+  bool _isPackedState(String raw) {
+    final v = raw.trim().toLowerCase();
+    return v == 'packed' || v == 'packed done' || v == 'done';
+  }
+
+  bool _allStoresPacked(Map<String, dynamic> order) {
+    final items = _orderItems(order);
+    final itemStoreIds = <String>{};
+    for (final item in items) {
+      final sid = (item['storeId'] ?? '').toString().trim();
+      if (sid.isNotEmpty) itemStoreIds.add(sid);
+    }
+    var storeIds = <String>{};
+    if (itemStoreIds.isNotEmpty) {
+      storeIds = itemStoreIds;
+    } else {
+      storeIds = _orderStoreIds(order);
+    }
+    if (storeIds.isEmpty) {
+      final rawPackMap = order['storePackStatusByStore'];
+      if (rawPackMap is Map) {
+        for (final entry in rawPackMap.entries) {
+          final sid = entry.key.toString().trim();
+          if (sid.isNotEmpty) storeIds.add(sid);
+        }
+      }
+    }
+    if (storeIds.isEmpty) return true;
+    for (final sid in storeIds) {
+      if (!_isPackedState(_packStatusForStore(order, sid))) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  bool _isFinalOrder(Map<String, dynamic> order) {
+    final status = (order['status'] ?? '').toString().trim().toLowerCase();
+    final delivery =
+        (order['deliveryStatus'] ?? '').toString().trim().toLowerCase();
+    return status == 'completed' ||
+        status == 'delivered' ||
+        status == 'cancelled' ||
+        status == 'canceled' ||
+        delivery == 'delivered' ||
+        delivery == 'cancelled' ||
+        delivery == 'canceled';
+  }
+
+  bool _matchesFilter(Map<String, dynamic> order, String scopedStoreId) {
+    if (_statusFilter == 'all') return true;
+    final createdAt = _asDate(order['createdAt']);
+    final isToday = DateUtils.isSameDay(createdAt, DateTime.now());
+    final isFinal = _isFinalOrder(order);
+    final deliveryUid = (order['deliveryUid'] ?? '').toString().trim();
+    final deliveryId = (order['deliveryId'] ?? '').toString().trim();
+    final status = (order['status'] ?? '').toString().trim().toLowerCase();
+    final deliveryStatus =
+        (order['deliveryStatus'] ?? '').toString().trim().toLowerCase();
+
+    final packed =
+        scopedStoreId.isEmpty
+            ? _allStoresPacked(order)
+            : _isPackedState(_packStatusForStore(order, scopedStoreId));
+
+    if (_statusFilter == 'today') return isToday;
+    if (_statusFilter == 'pending_pack') return !packed && !isFinal;
+    if (_statusFilter == 'packed') return packed && !isFinal;
+    if (_statusFilter == 'assigned') {
+      return (deliveryUid.isNotEmpty || deliveryId.isNotEmpty) && !isFinal;
+    }
+    if (_statusFilter == 'delivered') {
+      return status == 'completed' ||
+          status == 'delivered' ||
+          deliveryStatus == 'delivered';
+    }
+    if (_statusFilter == 'cancelled') {
+      return status == 'cancelled' ||
+          status == 'canceled' ||
+          deliveryStatus == 'cancelled' ||
+          deliveryStatus == 'canceled';
+    }
+    return true;
+  }
+
+  Future<void> _setPackStatus(
+    BuildContext context,
+    String orderPath,
+    String storeId,
+    bool packed,
+  ) async {
+    final ok = await _confirm(
+      context,
+      packed ? 'Mark Packed Done' : 'Mark Pending',
+      packed
+          ? 'Set your store items as packed done and ready for pickup?'
+          : 'Set your store items back to pending pack?',
+      confirmText: 'Update',
+    );
+    if (!ok) return;
+
+    try {
+      await widget.svc.updateStorePackStatusByPath(
+        orderPath: orderPath,
+        storeId: storeId,
+        packed: packed,
+      );
+      if (context.mounted) {
+        _showMsg(
+          context,
+          packed
+              ? 'Store packing status updated to Packed Done.'
+              : 'Store packing status updated to Pending.',
+        );
+      }
+      await _loadOrders();
+    } on FirebaseException catch (e) {
+      if (context.mounted) {
+        _showMsg(context, 'Update failed: ${e.message ?? e.code}');
+      }
+    } catch (e) {
+      if (context.mounted) _showMsg(context, 'Update failed: $e');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     const statuses = [
       'all',
-      'pending',
-      'processing',
+      'today',
+      'pending_pack',
+      'packed',
       'assigned',
-      'shipping',
       'delivered',
       'cancelled',
     ];
@@ -1308,12 +1617,24 @@ class _OrdersAdminTabState extends State<OrdersAdminTab> {
           StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
             stream: _ordersStream(),
             builder: (context, snap) {
-              final total = snap.data?.docs.length ?? 0;
+              final scope = _scopedStoreId;
+              final live = snap.data?.docs ?? const [];
+              final hasLiveData = live.isNotEmpty;
+              var docs = _sortedOrders(hasLiveData ? live : _orders);
+              if (scope.isNotEmpty) {
+                docs =
+                    docs
+                        .where((d) => _orderContainsStore(d.data(), scope))
+                        .toList();
+              }
               return _SectionCountHeader(
                 title: 'Orders',
-                subtitle: 'Manage order status and delivery assignment.',
+                subtitle:
+                    scope.isEmpty
+                        ? 'Manage order status and delivery assignment.'
+                        : 'Per-day and pending packing orders for your store.',
                 icon: Icons.receipt_long_outlined,
-                countText: '$total',
+                countText: '${docs.length}',
               );
             },
           ),
@@ -1324,14 +1645,20 @@ class _OrdersAdminTabState extends State<OrdersAdminTab> {
               labelText: 'Filter by Status',
             ),
             items:
-            statuses
-                .map(
-                  (e) => DropdownMenuItem<String>(
-                value: e,
-                child: Text(e.toUpperCase()),
-              ),
-            )
-                .toList(),
+                statuses
+                    .map(
+                      (e) => DropdownMenuItem<String>(
+                        value: e,
+                        child: Text(
+                          e == 'pending_pack'
+                              ? 'PENDING PACK'
+                              : e == 'today'
+                              ? 'TODAY'
+                              : e.toUpperCase(),
+                        ),
+                      ),
+                    )
+                    .toList(),
             onChanged: (v) {
               if (v == null) return;
               setState(() => _statusFilter = v);
@@ -1342,188 +1669,266 @@ class _OrdersAdminTabState extends State<OrdersAdminTab> {
             child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
               stream: _ordersStream(),
               builder: (context, snap) {
-                if (snap.hasError) return _streamError(snap.error);
-                if (!snap.hasData) {
+                final live = snap.data?.docs ?? const [];
+                final hasLiveData = live.isNotEmpty;
+                var docs = _sortedOrders(hasLiveData ? live : _orders);
+
+                if (snap.connectionState == ConnectionState.waiting &&
+                    _loading &&
+                    docs.isEmpty) {
                   return const Center(child: CircularProgressIndicator());
                 }
-
-                var docs = snap.data!.docs.toList();
-                docs.sort((a, b) {
-                  final ad = _asDate(a.data()['createdAt']);
-                  final bd = _asDate(b.data()['createdAt']);
-                  final c = bd.compareTo(ad);
-                  if (c != 0) return c;
-                  return b.id.compareTo(a.id);
-                });
-                if (_statusFilter != 'all') {
+                final scopedStoreId = _scopedStoreId;
+                if (scopedStoreId.isNotEmpty) {
                   docs =
                       docs
                           .where(
-                            (e) =>
-                        (e.data()['status'] ?? '').toString() ==
-                            _statusFilter,
-                      )
+                            (e) => _orderContainsStore(e.data(), scopedStoreId),
+                          )
                           .toList();
                 }
+                docs =
+                    docs
+                        .where((e) => _matchesFilter(e.data(), scopedStoreId))
+                        .toList();
 
-                if (docs.isEmpty) {
-                  return const Center(
-                    child: Text(
-                      'No orders found',
-                      style: TextStyle(fontWeight: FontWeight.w800),
+                if (snap.hasError && docs.isEmpty) {
+                  return RefreshIndicator(
+                    onRefresh: _loadOrders,
+                    child: ListView(
+                      children: [
+                        const SizedBox(height: 160),
+                        _streamError(snap.error),
+                      ],
                     ),
                   );
                 }
 
-                return ListView.separated(
-                  itemCount: docs.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 10),
-                  itemBuilder: (_, i) {
-                    final d = docs[i];
-                    final o = d.data();
-
-                    final status = (o['status'] ?? 'pending').toString();
-                    final statusLower = status.trim().toLowerCase();
-                    final deliveryStatusLower =
-                    (o['deliveryStatus'] ?? '')
-                        .toString()
-                        .trim()
-                        .toLowerCase();
-                    final isFinalOrder =
-                        statusLower == 'completed' ||
-                            statusLower == 'delivered' ||
-                            deliveryStatusLower == 'delivered';
-                    final total = o['total'] ?? o['totalAmount'] ?? 0;
-                    final customer =
-                    (o['userName'] ??
-                        o['customerName'] ??
-                        o['email'] ??
-                        'Unknown Customer')
-                        .toString();
-                    final deliveryName =
-                    (o['deliveryName'] ?? '').toString().trim();
-                    final ts = o['createdAt'];
-
-                    String dateText = '-';
-                    if (ts is Timestamp) {
-                      dateText = DateFormat(
-                        'dd MMM yyyy, hh:mm a',
-                      ).format(ts.toDate());
-                    }
-
-                    return Container(
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF7FAFF),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: const Color(0xFFE6E6E6)),
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.all(14),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                const CircleAvatar(
-                                  backgroundColor: Color(0xFFE3F2FD),
-                                  foregroundColor: Color(0xFF1565C0),
-                                  child: Icon(Icons.receipt_long_outlined),
-                                ),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                    CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        'Order ${d.id}',
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.w900,
-                                          fontSize: 16,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 2),
-                                      Text(customer),
-                                    ],
-                                  ),
-                                ),
-                                _chip(status.toUpperCase()),
-                              ],
-                            ),
-                            const SizedBox(height: 10),
-                            Text('Date: $dateText'),
-                            Text('Total: ${_priceText(total)}'),
-                            if (deliveryName.isNotEmpty)
-                              Text('Delivery Staff: $deliveryName'),
-                            const SizedBox(height: 12),
-                            Wrap(
-                              spacing: 8,
-                              runSpacing: 8,
-                              children: [
-                                OutlinedButton(
-                                  onPressed:
-                                  isFinalOrder
-                                      ? null
-                                      : () => _updateStatus(
-                                    context,
-                                    d.reference,
-                                    'processing',
-                                  ),
-                                  child: const Text('Processing'),
-                                ),
-                                OutlinedButton(
-                                  onPressed:
-                                  isFinalOrder
-                                      ? null
-                                      : () => _updateStatus(
-                                    context,
-                                    d.reference,
-                                    'shipping',
-                                  ),
-                                  child: const Text('Shipping'),
-                                ),
-                                OutlinedButton(
-                                  onPressed:
-                                  isFinalOrder
-                                      ? null
-                                      : () => _updateStatus(
-                                    context,
-                                    d.reference,
-                                    'delivered',
-                                  ),
-                                  child: const Text('Delivered'),
-                                ),
-                                OutlinedButton(
-                                  onPressed:
-                                  isFinalOrder
-                                      ? null
-                                      : () => _updateStatus(
-                                    context,
-                                    d.reference,
-                                    'cancelled',
-                                  ),
-                                  child: const Text('Cancelled'),
-                                ),
-                                if (widget.canAssignDelivery)
-                                  ElevatedButton.icon(
-                                    onPressed:
-                                        () => _assignDelivery(
-                                      context,
-                                      d.reference,
-                                      (o['deliveryId'] ?? '').toString(),
-                                    ),
-                                    icon: const Icon(
-                                      Icons.local_shipping_outlined,
-                                    ),
-                                    label: const Text('Assign Delivery'),
-                                  ),
-                              ],
-                            ),
-                          ],
+                if (docs.isEmpty) {
+                  return RefreshIndicator(
+                    onRefresh: _loadOrders,
+                    child: ListView(
+                      children: const [
+                        SizedBox(height: 160),
+                        Center(
+                          child: Text(
+                            'No orders found',
+                            style: TextStyle(fontWeight: FontWeight.w800),
+                          ),
                         ),
-                      ),
-                    );
-                  },
+                      ],
+                    ),
+                  );
+                }
+
+                return RefreshIndicator(
+                  onRefresh: _loadOrders,
+                  child: ListView.separated(
+                    itemCount: docs.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 10),
+                    itemBuilder: (_, i) {
+                      final d = docs[i];
+                      final o = d.data();
+
+                      final status = (o['status'] ?? 'pending').toString();
+                      final statusLower = status.trim().toLowerCase();
+                      final deliveryStatusLower =
+                          (o['deliveryStatus'] ?? '')
+                              .toString()
+                              .trim()
+                              .toLowerCase();
+                      final isFinalOrder =
+                          statusLower == 'completed' ||
+                          statusLower == 'delivered' ||
+                          statusLower == 'cancelled' ||
+                          statusLower == 'canceled' ||
+                          deliveryStatusLower == 'cancelled' ||
+                          deliveryStatusLower == 'canceled' ||
+                          deliveryStatusLower == 'delivered';
+                      final storePacked =
+                          scopedStoreId.isNotEmpty &&
+                          _isPackedState(_packStatusForStore(o, scopedStoreId));
+                      final allStoresPacked = _allStoresPacked(o);
+                      final total = o['total'] ?? o['totalAmount'] ?? 0;
+                      final customer =
+                          (o['userName'] ??
+                                  o['customerName'] ??
+                                  o['email'] ??
+                                  'Unknown Customer')
+                              .toString();
+                      final deliveryName =
+                          (o['deliveryName'] ?? '').toString().trim();
+                      final ts = o['createdAt'];
+
+                      String dateText = '-';
+                      if (ts is Timestamp) {
+                        dateText = DateFormat(
+                          'dd MMM yyyy, hh:mm a',
+                        ).format(ts.toDate());
+                      }
+
+                      final itemsForCard =
+                          scopedStoreId.isEmpty
+                              ? _orderItems(o)
+                              : _storeItems(o, scopedStoreId);
+                      return Container(
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF7FAFF),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: const Color(0xFFE6E6E6)),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(14),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  const CircleAvatar(
+                                    backgroundColor: Color(0xFFE3F2FD),
+                                    foregroundColor: Color(0xFF1565C0),
+                                    child: Icon(Icons.receipt_long_outlined),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          'Order ${d.id}',
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.w900,
+                                            fontSize: 16,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Text(customer),
+                                      ],
+                                    ),
+                                  ),
+                                  _chip(status.toUpperCase()),
+                                ],
+                              ),
+                              const SizedBox(height: 10),
+                              Text('Date: $dateText'),
+                              Text('Total: ${_priceText(total)}'),
+                              if (scopedStoreId.isNotEmpty)
+                                Text(
+                                  'Packing: ${storePacked ? 'Packed' : 'Pending'}',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w800,
+                                    color:
+                                        storePacked
+                                            ? const Color(0xFF2E7D32)
+                                            : const Color(0xFFEF6C00),
+                                  ),
+                                ),
+                              if (scopedStoreId.isEmpty)
+                                Text(
+                                  'Packing: ${allStoresPacked ? 'Packed Done' : 'Pending'}',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w800,
+                                    color:
+                                        allStoresPacked
+                                            ? const Color(0xFF2E7D32)
+                                            : const Color(0xFFEF6C00),
+                                  ),
+                                ),
+                              if (deliveryName.isNotEmpty)
+                                Text('Delivery Staff: $deliveryName'),
+                              if (itemsForCard.isNotEmpty) ...[
+                                const SizedBox(height: 10),
+                                const Text(
+                                  'Products to pack/pickup',
+                                  style: TextStyle(fontWeight: FontWeight.w800),
+                                ),
+                                const SizedBox(height: 6),
+                                ...itemsForCard.map((item) {
+                                  final name = _productNameOf(item);
+                                  final qty = _qtyOf(item);
+                                  final sname =
+                                      (item['storeName'] ?? '')
+                                          .toString()
+                                          .trim();
+                                  final prefix =
+                                      sname.isEmpty ? '' : '$sname - ';
+                                  return Text('- $prefix$name x$qty');
+                                }),
+                              ],
+                              const SizedBox(height: 12),
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 8,
+                                children: [
+                                  if (scopedStoreId.isNotEmpty)
+                                    OutlinedButton.icon(
+                                      onPressed:
+                                          isFinalOrder
+                                              ? null
+                                              : () => _setPackStatus(
+                                                context,
+                                                d.reference.path,
+                                                scopedStoreId,
+                                                !storePacked,
+                                              ),
+                                      icon: Icon(
+                                        storePacked
+                                            ? Icons.inventory_2_outlined
+                                            : Icons.check_circle_outline,
+                                      ),
+                                      label: Text(
+                                        storePacked
+                                            ? 'Mark Pending'
+                                            : 'Packed Done',
+                                      ),
+                                    ),
+                                  OutlinedButton(
+                                    onPressed:
+                                        isFinalOrder
+                                            ? null
+                                            : () => _updateStatus(
+                                              context,
+                                              d.reference,
+                                              'processing',
+                                            ),
+                                    child: const Text('Processing'),
+                                  ),
+                                  OutlinedButton(
+                                    onPressed:
+                                        isFinalOrder
+                                            ? null
+                                            : () => _updateStatus(
+                                              context,
+                                              d.reference,
+                                              'cancelled',
+                                            ),
+                                    child: const Text('Cancelled'),
+                                  ),
+                                  if (widget.canAssignDelivery)
+                                    ElevatedButton.icon(
+                                      onPressed:
+                                          (!allStoresPacked || isFinalOrder)
+                                              ? null
+                                              : () => _assignDelivery(
+                                                context,
+                                                d.reference,
+                                                (o['deliveryId'] ?? '')
+                                                    .toString(),
+                                              ),
+                                      icon: const Icon(
+                                        Icons.local_shipping_outlined,
+                                      ),
+                                      label: const Text('Assign Delivery'),
+                                    ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
                 );
               },
             ),
@@ -1547,11 +1952,11 @@ class _ReviewsAdminTabState extends State<ReviewsAdminTab> {
   String _categoryFilter = 'all';
 
   Future<bool> _confirm(
-      BuildContext context,
-      String title,
-      String message, {
-        String confirmText = 'Yes',
-      }) async {
+    BuildContext context,
+    String title,
+    String message, {
+    String confirmText = 'Yes',
+  }) async {
     return showConfirmDialog(
       context,
       title: title,
@@ -1580,10 +1985,10 @@ class _ReviewsAdminTabState extends State<ReviewsAdminTab> {
   }
 
   Future<void> _deleteReview(
-      BuildContext context,
-      DocumentReference<Map<String, dynamic>> ref,
-      String title,
-      ) async {
+    BuildContext context,
+    DocumentReference<Map<String, dynamic>> ref,
+    String title,
+  ) async {
     final ok = await _confirm(
       context,
       'Delete Review',
@@ -1607,12 +2012,12 @@ class _ReviewsAdminTabState extends State<ReviewsAdminTab> {
   @override
   Widget build(BuildContext context) {
     final reviewsStream =
-    FirebaseFirestore.instance
-        .collection('product_reviews')
-        .orderBy('createdAt', descending: true)
-        .snapshots();
+        FirebaseFirestore.instance
+            .collection('product_reviews')
+            .orderBy('createdAt', descending: true)
+            .snapshots();
     final productsStream =
-    FirebaseFirestore.instance.collection('products').snapshots();
+        FirebaseFirestore.instance.collection('products').snapshots();
 
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream: reviewsStream,
@@ -1641,9 +2046,9 @@ class _ReviewsAdminTabState extends State<ReviewsAdminTab> {
 
             String categoryOfReview(Map<String, dynamic> review) {
               final direct =
-              (review['category'] ?? review['productCategory'] ?? '')
-                  .toString()
-                  .trim();
+                  (review['category'] ?? review['productCategory'] ?? '')
+                      .toString()
+                      .trim();
               if (direct.isNotEmpty) return direct;
 
               final productId = (review['productId'] ?? '').toString().trim();
@@ -1658,17 +2063,18 @@ class _ReviewsAdminTabState extends State<ReviewsAdminTab> {
 
             final cleanStoreId = (widget.fixedStoreId ?? '').trim();
             final allDocs =
-            reviewSnap.data!.docs.where((d) {
-              if (cleanStoreId.isEmpty) return true;
-              final review = d.data();
-              final reviewStoreId =
-              (review['storeId'] ?? '').toString().trim();
-              if (reviewStoreId == cleanStoreId) return true;
-              final productId =
-              (review['productId'] ?? '').toString().trim();
-              final productStoreId = productStoreIdById[productId] ?? '';
-              return productStoreId == cleanStoreId;
-            }).toList();
+                reviewSnap.data!.docs.where((d) {
+                  if (cleanStoreId.isEmpty) return true;
+                  final review = d.data();
+                  final reviewStoreId =
+                      (review['storeId'] ?? '').toString().trim();
+                  if (reviewStoreId == cleanStoreId) return true;
+                  if (reviewStoreId.isNotEmpty) return false;
+                  final productId =
+                      (review['productId'] ?? '').toString().trim();
+                  final productStoreId = productStoreIdById[productId] ?? '';
+                  return productStoreId == cleanStoreId;
+                }).toList();
             final categorySet = <String>{'all'};
             for (final d in allDocs) {
               categorySet.add(categoryOfReview(d.data()));
@@ -1677,20 +2083,20 @@ class _ReviewsAdminTabState extends State<ReviewsAdminTab> {
               categorySet.add(_categoryFilter);
             }
             final categories =
-            categorySet.toList()..sort((a, b) {
-              if (a == 'all') return -1;
-              if (b == 'all') return 1;
-              return a.toLowerCase().compareTo(b.toLowerCase());
-            });
+                categorySet.toList()..sort((a, b) {
+                  if (a == 'all') return -1;
+                  if (b == 'all') return 1;
+                  return a.toLowerCase().compareTo(b.toLowerCase());
+                });
 
             final docs =
-            _categoryFilter == 'all'
-                ? allDocs
-                : allDocs
-                .where(
-                  (d) => categoryOfReview(d.data()) == _categoryFilter,
-            )
-                .toList();
+                _categoryFilter == 'all'
+                    ? allDocs
+                    : allDocs
+                        .where(
+                          (d) => categoryOfReview(d.data()) == _categoryFilter,
+                        )
+                        .toList();
 
             return Padding(
               padding: const EdgeInsets.all(14),
@@ -1709,14 +2115,14 @@ class _ReviewsAdminTabState extends State<ReviewsAdminTab> {
                       labelText: 'Filter by Category',
                     ),
                     items:
-                    categories
-                        .map(
-                          (c) => DropdownMenuItem<String>(
-                        value: c,
-                        child: Text(c == 'all' ? 'All Categories' : c),
-                      ),
-                    )
-                        .toList(),
+                        categories
+                            .map(
+                              (c) => DropdownMenuItem<String>(
+                                value: c,
+                                child: Text(c == 'all' ? 'All Categories' : c),
+                              ),
+                            )
+                            .toList(),
                     onChanged: (v) {
                       if (v == null) return;
                       setState(() => _categoryFilter = v);
@@ -1725,91 +2131,91 @@ class _ReviewsAdminTabState extends State<ReviewsAdminTab> {
                   const SizedBox(height: 12),
                   Expanded(
                     child:
-                    docs.isEmpty
-                        ? const Center(
-                      child: Text(
-                        'No reviews found',
-                        style: TextStyle(fontWeight: FontWeight.w800),
-                      ),
-                    )
-                        : ListView.separated(
-                      itemCount: docs.length,
-                      separatorBuilder:
-                          (_, __) => const SizedBox(height: 10),
-                      itemBuilder: (_, i) {
-                        final d = docs[i];
-                        final r = d.data();
-
-                        final product =
-                        (r['productName'] ??
-                            r['title'] ??
-                            'Product')
-                            .toString();
-                        final user =
-                        (r['userName'] ??
-                            r['name'] ??
-                            r['email'] ??
-                            'Anonymous')
-                            .toString();
-                        final rating =
-                        ((r['rating'] ?? 0) as num).toDouble();
-                        final comment = (r['comment'] ?? '').toString();
-                        final category = categoryOfReview(r);
-
-                        return Container(
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFF7FAFF),
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(
-                              color: const Color(0xFFE6E6E6),
-                            ),
-                          ),
-                          child: ListTile(
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 14,
-                              vertical: 8,
-                            ),
-                            leading: const CircleAvatar(
-                              backgroundColor: Color(0xFFE3F2FD),
-                              foregroundColor: Color(0xFF1565C0),
-                              child: Icon(Icons.rate_review_outlined),
-                            ),
-                            title: Text(
-                              product,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w900,
+                        docs.isEmpty
+                            ? const Center(
+                              child: Text(
+                                'No reviews found',
+                                style: TextStyle(fontWeight: FontWeight.w800),
                               ),
+                            )
+                            : ListView.separated(
+                              itemCount: docs.length,
+                              separatorBuilder:
+                                  (_, __) => const SizedBox(height: 10),
+                              itemBuilder: (_, i) {
+                                final d = docs[i];
+                                final r = d.data();
+
+                                final product =
+                                    (r['productName'] ??
+                                            r['title'] ??
+                                            'Product')
+                                        .toString();
+                                final user =
+                                    (r['userName'] ??
+                                            r['name'] ??
+                                            r['email'] ??
+                                            'Anonymous')
+                                        .toString();
+                                final rating =
+                                    ((r['rating'] ?? 0) as num).toDouble();
+                                final comment = (r['comment'] ?? '').toString();
+                                final category = categoryOfReview(r);
+
+                                return Container(
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFF7FAFF),
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(
+                                      color: const Color(0xFFE6E6E6),
+                                    ),
+                                  ),
+                                  child: ListTile(
+                                    contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 14,
+                                      vertical: 8,
+                                    ),
+                                    leading: const CircleAvatar(
+                                      backgroundColor: Color(0xFFE3F2FD),
+                                      foregroundColor: Color(0xFF1565C0),
+                                      child: Icon(Icons.rate_review_outlined),
+                                    ),
+                                    title: Text(
+                                      product,
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.w900,
+                                      ),
+                                    ),
+                                    subtitle: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text('By: $user'),
+                                        const SizedBox(height: 4),
+                                        Text('Category: $category'),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          'Rating: ${rating.toStringAsFixed(1)} / 5',
+                                        ),
+                                        if (comment.isNotEmpty) ...[
+                                          const SizedBox(height: 6),
+                                          Text(comment),
+                                        ],
+                                      ],
+                                    ),
+                                    trailing: IconButton(
+                                      icon: const Icon(Icons.delete_outline),
+                                      onPressed:
+                                          () => _deleteReview(
+                                            context,
+                                            d.reference,
+                                            product,
+                                          ),
+                                    ),
+                                  ),
+                                );
+                              },
                             ),
-                            subtitle: Column(
-                              crossAxisAlignment:
-                              CrossAxisAlignment.start,
-                              children: [
-                                Text('By: $user'),
-                                const SizedBox(height: 4),
-                                Text('Category: $category'),
-                                const SizedBox(height: 4),
-                                Text(
-                                  'Rating: ${rating.toStringAsFixed(1)} / 5',
-                                ),
-                                if (comment.isNotEmpty) ...[
-                                  const SizedBox(height: 6),
-                                  Text(comment),
-                                ],
-                              ],
-                            ),
-                            trailing: IconButton(
-                              icon: const Icon(Icons.delete_outline),
-                              onPressed:
-                                  () => _deleteReview(
-                                context,
-                                d.reference,
-                                product,
-                              ),
-                            ),
-                          ),
-                        );
-                      },
-                    ),
                   ),
                 ],
               ),
@@ -1833,11 +2239,11 @@ class EventsAdminTab extends StatelessWidget {
   });
 
   Future<bool> _confirm(
-      BuildContext context,
-      String title,
-      String message, {
-        String confirmText = 'Yes',
-      }) async {
+    BuildContext context,
+    String title,
+    String message, {
+    String confirmText = 'Yes',
+  }) async {
     return showConfirmDialog(
       context,
       title: title,
@@ -1878,13 +2284,13 @@ class EventsAdminTab extends StatelessWidget {
   }
 
   Future<void> _previewEvent(
-      BuildContext context,
-      String eventId,
-      Map<String, dynamic> data,
-      ) async {
+    BuildContext context,
+    String eventId,
+    Map<String, dynamic> data,
+  ) async {
     final title = (data['title'] ?? 'Untitled Event').toString();
     final description =
-    (data['description'] ?? data['message'] ?? '').toString().trim();
+        (data['description'] ?? data['message'] ?? '').toString().trim();
     final imageUrl = (data['imageUrl'] ?? '').toString().trim();
     final dateText = _eventDateText(data);
 
@@ -1904,23 +2310,23 @@ class EventsAdminTab extends StatelessWidget {
                     width: double.infinity,
                     height: 180,
                     child:
-                    _isHttpImageUrl(imageUrl)
-                        ? Image.network(
-                      imageUrl,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) {
-                        return const ColoredBox(
-                          color: Color(0xFFF1F3F4),
-                          child: Center(
-                            child: Text('Unable to load image'),
-                          ),
-                        );
-                      },
-                    )
-                        : const ColoredBox(
-                      color: Color(0xFFF1F3F4),
-                      child: Center(child: Text('No image')),
-                    ),
+                        _isHttpImageUrl(imageUrl)
+                            ? Image.network(
+                              imageUrl,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) {
+                                return const ColoredBox(
+                                  color: Color(0xFFF1F3F4),
+                                  child: Center(
+                                    child: Text('Unable to load image'),
+                                  ),
+                                );
+                              },
+                            )
+                            : const ColoredBox(
+                              color: Color(0xFFF1F3F4),
+                              child: Center(child: Text('No image')),
+                            ),
                   ),
                 ),
                 const SizedBox(height: 10),
@@ -1955,10 +2361,10 @@ class EventsAdminTab extends StatelessWidget {
   }
 
   Future<void> _toggleEventActive(
-      BuildContext context,
-      String eventId,
-      bool currentValue,
-      ) async {
+    BuildContext context,
+    String eventId,
+    bool currentValue,
+  ) async {
     try {
       await FirebaseFirestore.instance.collection('events').doc(eventId).set({
         'active': !currentValue,
@@ -1980,10 +2386,10 @@ class EventsAdminTab extends StatelessWidget {
   }
 
   Future<void> _addOrEditEvent(
-      BuildContext context, {
-        String? eventId,
-        Map<String, dynamic>? data,
-      }) async {
+    BuildContext context, {
+    String? eventId,
+    Map<String, dynamic>? data,
+  }) async {
     final titleCtrl = TextEditingController(
       text: (data?['title'] ?? '').toString(),
     );
@@ -1998,9 +2404,9 @@ class EventsAdminTab extends StatelessWidget {
     final picker = ImagePicker();
 
     DateTime eventDate =
-    (data?['date'] is Timestamp)
-        ? (data!['date'] as Timestamp).toDate()
-        : DateTime.now().add(const Duration(days: 7));
+        (data?['date'] is Timestamp)
+            ? (data!['date'] as Timestamp).toDate()
+            : DateTime.now().add(const Duration(days: 7));
 
     Future<void> pickDate(StateSetter setDialogState) async {
       final picked = await showDatePicker(
@@ -2061,38 +2467,38 @@ class EventsAdminTab extends StatelessWidget {
                         width: double.infinity,
                         height: 220,
                         child:
-                        imageCtrl.text.trim().isEmpty
-                            ? Container(
-                          color: const Color(0xFFF1F3F4),
-                          alignment: Alignment.center,
-                          child: const Text(
-                            'No image selected',
-                            style: TextStyle(
-                              color: Colors.black54,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        )
-                            : Container(
-                          color: const Color(0xFFF1F3F4),
-                          child: Image.network(
-                            imageCtrl.text.trim(),
-                            fit: BoxFit.contain,
-                            errorBuilder: (_, __, ___) {
-                              return Container(
-                                color: const Color(0xFFF1F3F4),
-                                alignment: Alignment.center,
-                                child: const Text(
-                                  'Unable to load image',
-                                  style: TextStyle(
-                                    color: Colors.black54,
-                                    fontWeight: FontWeight.w700,
+                            imageCtrl.text.trim().isEmpty
+                                ? Container(
+                                  color: const Color(0xFFF1F3F4),
+                                  alignment: Alignment.center,
+                                  child: const Text(
+                                    'No image selected',
+                                    style: TextStyle(
+                                      color: Colors.black54,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                )
+                                : Container(
+                                  color: const Color(0xFFF1F3F4),
+                                  child: Image.network(
+                                    imageCtrl.text.trim(),
+                                    fit: BoxFit.contain,
+                                    errorBuilder: (_, __, ___) {
+                                      return Container(
+                                        color: const Color(0xFFF1F3F4),
+                                        alignment: Alignment.center,
+                                        child: const Text(
+                                          'Unable to load image',
+                                          style: TextStyle(
+                                            color: Colors.black54,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                      );
+                                    },
                                   ),
                                 ),
-                              );
-                            },
-                          ),
-                        ),
                       ),
                     ),
                     const SizedBox(height: 10),
@@ -2100,47 +2506,47 @@ class EventsAdminTab extends StatelessWidget {
                       width: double.infinity,
                       child: OutlinedButton.icon(
                         onPressed:
-                        uploadingImage
-                            ? null
-                            : () async {
-                          try {
-                            final file = await picker.pickImage(
-                              source: ImageSource.gallery,
-                              imageQuality: 85,
-                              maxWidth: 1800,
-                            );
-                            if (file == null) return;
+                            uploadingImage
+                                ? null
+                                : () async {
+                                  try {
+                                    final file = await picker.pickImage(
+                                      source: ImageSource.gallery,
+                                      imageQuality: 85,
+                                      maxWidth: 1800,
+                                    );
+                                    if (file == null) return;
 
-                            setDialogState(() {
-                              errorText = null;
-                              uploadingImage = true;
-                            });
+                                    setDialogState(() {
+                                      errorText = null;
+                                      uploadingImage = true;
+                                    });
 
-                            final url = await svc.uploadImageXFile(
-                              file: file,
-                              folder: 'events',
-                              fileNameHint: titleCtrl.text.trim(),
-                            );
-                            imageCtrl.text = url;
-                            setDialogState(
-                                  () => uploadingImage = false,
-                            );
-                            if (context.mounted) {
-                              _showMsg(context, 'Image uploaded.');
-                            }
-                          } on FirebaseException catch (e) {
-                            setDialogState(() {
-                              uploadingImage = false;
-                              errorText =
-                              'Upload failed: ${e.message ?? e.code}';
-                            });
-                          } catch (e) {
-                            setDialogState(() {
-                              uploadingImage = false;
-                              errorText = 'Upload failed: $e';
-                            });
-                          }
-                        },
+                                    final url = await svc.uploadImageXFile(
+                                      file: file,
+                                      folder: 'events',
+                                      fileNameHint: titleCtrl.text.trim(),
+                                    );
+                                    imageCtrl.text = url;
+                                    setDialogState(
+                                      () => uploadingImage = false,
+                                    );
+                                    if (context.mounted) {
+                                      _showMsg(context, 'Image uploaded.');
+                                    }
+                                  } on FirebaseException catch (e) {
+                                    setDialogState(() {
+                                      uploadingImage = false;
+                                      errorText =
+                                          'Upload failed: ${e.message ?? e.code}';
+                                    });
+                                  } catch (e) {
+                                    setDialogState(() {
+                                      uploadingImage = false;
+                                      errorText = 'Upload failed: $e';
+                                    });
+                                  }
+                                },
                         icon: const Icon(Icons.cloud_upload_outlined),
                         label: Text(
                           uploadingImage
@@ -2154,11 +2560,11 @@ class EventsAdminTab extends StatelessWidget {
                       alignment: Alignment.centerRight,
                       child: OutlinedButton.icon(
                         onPressed:
-                        uploadingImage
-                            ? null
-                            : () {
-                          setDialogState(() => imageCtrl.clear());
-                        },
+                            uploadingImage
+                                ? null
+                                : () {
+                                  setDialogState(() => imageCtrl.clear());
+                                },
                         icon: const Icon(Icons.delete_outline),
                         label: const Text('Remove Image'),
                       ),
@@ -2206,7 +2612,7 @@ class EventsAdminTab extends StatelessWidget {
                     if (uploadingImage) {
                       setDialogState(() {
                         errorText =
-                        'Please wait until image upload is complete.';
+                            'Please wait until image upload is complete.';
                       });
                       return;
                     }
@@ -2223,13 +2629,13 @@ class EventsAdminTab extends StatelessWidget {
 
                     try {
                       final ref =
-                      eventId == null
-                          ? FirebaseFirestore.instance
-                          .collection('events')
-                          .doc()
-                          : FirebaseFirestore.instance
-                          .collection('events')
-                          .doc(eventId);
+                          eventId == null
+                              ? FirebaseFirestore.instance
+                                  .collection('events')
+                                  .doc()
+                              : FirebaseFirestore.instance
+                                  .collection('events')
+                                  .doc(eventId);
 
                       await ref.set({
                         'title': title,
@@ -2271,10 +2677,10 @@ class EventsAdminTab extends StatelessWidget {
   }
 
   Future<void> _deleteEvent(
-      BuildContext context,
-      String eventId,
-      String title,
-      ) async {
+    BuildContext context,
+    String eventId,
+    String title,
+  ) async {
     final ok = await _confirm(
       context,
       'Delete Event',
@@ -2302,11 +2708,11 @@ class EventsAdminTab extends StatelessWidget {
   Widget build(BuildContext context) {
     final cleanStoreId = (fixedStoreId ?? '').trim();
     final eventsQuery =
-    cleanStoreId.isEmpty
-        ? FirebaseFirestore.instance.collection('events')
-        : FirebaseFirestore.instance
-        .collection('events')
-        .where('storeId', isEqualTo: cleanStoreId);
+        cleanStoreId.isEmpty
+            ? FirebaseFirestore.instance.collection('events')
+            : FirebaseFirestore.instance
+                .collection('events')
+                .where('storeId', isEqualTo: cleanStoreId);
 
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream: eventsQuery.snapshots(),
@@ -2317,17 +2723,17 @@ class EventsAdminTab extends StatelessWidget {
         }
 
         final docs =
-        snap.data!.docs.toList()..sort((a, b) {
-          DateTime asDate(Object? v) {
-            if (v is Timestamp) return v.toDate();
-            if (v is DateTime) return v;
-            return DateTime.fromMillisecondsSinceEpoch(0);
-          }
+            snap.data!.docs.toList()..sort((a, b) {
+              DateTime asDate(Object? v) {
+                if (v is Timestamp) return v.toDate();
+                if (v is DateTime) return v;
+                return DateTime.fromMillisecondsSinceEpoch(0);
+              }
 
-          final ad = asDate(a.data()['date']);
-          final bd = asDate(b.data()['date']);
-          return bd.compareTo(ad);
-        });
+              final ad = asDate(a.data()['date']);
+              final bd = asDate(b.data()['date']);
+              return bd.compareTo(ad);
+            });
 
         return Padding(
           padding: const EdgeInsets.all(14),
@@ -2350,230 +2756,230 @@ class EventsAdminTab extends StatelessWidget {
               const SizedBox(height: 12),
               Expanded(
                 child:
-                docs.isEmpty
-                    ? const Center(
-                  child: Text(
-                    'No events yet',
-                    style: TextStyle(fontWeight: FontWeight.w800),
-                  ),
-                )
-                    : ListView.separated(
-                  itemCount: docs.length,
-                  separatorBuilder:
-                      (_, __) => const SizedBox(height: 10),
-                  itemBuilder: (_, i) {
-                    final d = docs[i];
-                    final e = d.data();
-                    final title =
-                    (e['title'] ?? 'Untitled Event').toString();
-                    final active = (e['active'] ?? false) == true;
-                    final date = _eventDateText(e);
-                    final imageUrl =
-                    (e['imageUrl'] ?? '').toString().trim();
+                    docs.isEmpty
+                        ? const Center(
+                          child: Text(
+                            'No events yet',
+                            style: TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                        )
+                        : ListView.separated(
+                          itemCount: docs.length,
+                          separatorBuilder:
+                              (_, __) => const SizedBox(height: 10),
+                          itemBuilder: (_, i) {
+                            final d = docs[i];
+                            final e = d.data();
+                            final title =
+                                (e['title'] ?? 'Untitled Event').toString();
+                            final active = (e['active'] ?? false) == true;
+                            final date = _eventDateText(e);
+                            final imageUrl =
+                                (e['imageUrl'] ?? '').toString().trim();
 
-                    return Container(
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF7FAFF),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: const Color(0xFFE6E6E6),
-                        ),
-                      ),
-                      child: InkWell(
-                        borderRadius: BorderRadius.circular(12),
-                        onTap: () => _previewEvent(context, d.id, e),
-                        child: Padding(
-                          padding: const EdgeInsets.all(12),
-                          child: Column(
-                            crossAxisAlignment:
-                            CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                crossAxisAlignment:
-                                CrossAxisAlignment.start,
-                                children: [
-                                  ClipRRect(
-                                    borderRadius: BorderRadius.circular(
-                                      8,
-                                    ),
-                                    child: SizedBox(
-                                      width: 52,
-                                      height: 52,
-                                      child:
-                                      _isHttpImageUrl(imageUrl)
-                                          ? Image.network(
-                                        imageUrl,
-                                        fit: BoxFit.cover,
-                                        errorBuilder: (
-                                            _,
-                                            __,
-                                            ___,
-                                            ) {
-                                          return const ColoredBox(
-                                            color: Color(
-                                              0xFFE3F2FD,
+                            return Container(
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF7FAFF),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: const Color(0xFFE6E6E6),
+                                ),
+                              ),
+                              child: InkWell(
+                                borderRadius: BorderRadius.circular(12),
+                                onTap: () => _previewEvent(context, d.id, e),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(12),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          ClipRRect(
+                                            borderRadius: BorderRadius.circular(
+                                              8,
                                             ),
-                                            child: Icon(
-                                              Icons
-                                                  .broken_image_outlined,
-                                              color: Color(
-                                                0xFF1565C0,
+                                            child: SizedBox(
+                                              width: 52,
+                                              height: 52,
+                                              child:
+                                                  _isHttpImageUrl(imageUrl)
+                                                      ? Image.network(
+                                                        imageUrl,
+                                                        fit: BoxFit.cover,
+                                                        errorBuilder: (
+                                                          _,
+                                                          __,
+                                                          ___,
+                                                        ) {
+                                                          return const ColoredBox(
+                                                            color: Color(
+                                                              0xFFE3F2FD,
+                                                            ),
+                                                            child: Icon(
+                                                              Icons
+                                                                  .broken_image_outlined,
+                                                              color: Color(
+                                                                0xFF1565C0,
+                                                              ),
+                                                            ),
+                                                          );
+                                                        },
+                                                      )
+                                                      : const ColoredBox(
+                                                        color: Color(
+                                                          0xFFE3F2FD,
+                                                        ),
+                                                        child: Icon(
+                                                          Icons
+                                                              .event_note_outlined,
+                                                          color: Color(
+                                                            0xFF1565C0,
+                                                          ),
+                                                        ),
+                                                      ),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 10),
+                                          Expanded(
+                                            child: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
+                                                Text(
+                                                  title,
+                                                  maxLines: 1,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                  style: const TextStyle(
+                                                    fontWeight: FontWeight.w900,
+                                                    fontSize: 16,
+                                                  ),
+                                                ),
+                                                const SizedBox(height: 2),
+                                                Text(
+                                                  'Date: $date',
+                                                  style: const TextStyle(
+                                                    color: Colors.black54,
+                                                    fontWeight: FontWeight.w600,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 8),
+                                      Wrap(
+                                        spacing: 8,
+                                        runSpacing: 4,
+                                        children: [
+                                          Chip(
+                                            label: Text(
+                                              active ? 'Active' : 'Inactive',
+                                              style: const TextStyle(
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w700,
                                               ),
                                             ),
-                                          );
-                                        },
-                                      )
-                                          : const ColoredBox(
-                                        color: Color(
-                                          0xFFE3F2FD,
-                                        ),
-                                        child: Icon(
-                                          Icons
-                                              .event_note_outlined,
-                                          color: Color(
-                                            0xFF1565C0,
+                                            padding: EdgeInsets.zero,
+                                            backgroundColor:
+                                                active
+                                                    ? const Color(0xFFE8F5E9)
+                                                    : const Color(0xFFFFEBEE),
                                           ),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 10),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                      CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          title,
-                                          maxLines: 1,
-                                          overflow:
-                                          TextOverflow.ellipsis,
-                                          style: const TextStyle(
-                                            fontWeight: FontWeight.w900,
-                                            fontSize: 16,
+                                          Chip(
+                                            label: Text(
+                                              _isHttpImageUrl(imageUrl)
+                                                  ? 'Image ready'
+                                                  : 'No image',
+                                              style: const TextStyle(
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w700,
+                                              ),
+                                            ),
+                                            padding: EdgeInsets.zero,
+                                            backgroundColor: const Color(
+                                              0xFFE3F2FD,
+                                            ),
                                           ),
-                                        ),
-                                        const SizedBox(height: 2),
-                                        Text(
-                                          'Date: $date',
-                                          style: const TextStyle(
-                                            color: Colors.black54,
-                                            fontWeight: FontWeight.w600,
+                                        ],
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Text(
+                                        (e['description'] ?? e['message'] ?? '')
+                                            .toString(),
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                      const SizedBox(height: 8),
+                                      Row(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.end,
+                                        children: [
+                                          IconButton(
+                                            tooltip: 'Preview',
+                                            icon: const Icon(
+                                              Icons.visibility_outlined,
+                                            ),
+                                            onPressed:
+                                                () => _previewEvent(
+                                                  context,
+                                                  d.id,
+                                                  e,
+                                                ),
                                           ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 8),
-                              Wrap(
-                                spacing: 8,
-                                runSpacing: 4,
-                                children: [
-                                  Chip(
-                                    label: Text(
-                                      active ? 'Active' : 'Inactive',
-                                      style: const TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w700,
+                                          IconButton(
+                                            tooltip:
+                                                active
+                                                    ? 'Set inactive'
+                                                    : 'Set active',
+                                            icon: Icon(
+                                              active
+                                                  ? Icons.toggle_on_outlined
+                                                  : Icons.toggle_off_outlined,
+                                            ),
+                                            onPressed:
+                                                () => _toggleEventActive(
+                                                  context,
+                                                  d.id,
+                                                  active,
+                                                ),
+                                          ),
+                                          IconButton(
+                                            icon: const Icon(
+                                              Icons.edit_outlined,
+                                            ),
+                                            onPressed:
+                                                () => _addOrEditEvent(
+                                                  context,
+                                                  eventId: d.id,
+                                                  data: e,
+                                                ),
+                                          ),
+                                          IconButton(
+                                            icon: const Icon(
+                                              Icons.delete_outline,
+                                            ),
+                                            onPressed:
+                                                () => _deleteEvent(
+                                                  context,
+                                                  d.id,
+                                                  title,
+                                                ),
+                                          ),
+                                        ],
                                       ),
-                                    ),
-                                    padding: EdgeInsets.zero,
-                                    backgroundColor:
-                                    active
-                                        ? const Color(0xFFE8F5E9)
-                                        : const Color(0xFFFFEBEE),
+                                    ],
                                   ),
-                                  Chip(
-                                    label: Text(
-                                      _isHttpImageUrl(imageUrl)
-                                          ? 'Image ready'
-                                          : 'No image',
-                                      style: const TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                    ),
-                                    padding: EdgeInsets.zero,
-                                    backgroundColor: const Color(
-                                      0xFFE3F2FD,
-                                    ),
-                                  ),
-                                ],
+                                ),
                               ),
-                              const SizedBox(height: 6),
-                              Text(
-                                (e['description'] ?? e['message'] ?? '')
-                                    .toString(),
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              const SizedBox(height: 8),
-                              Row(
-                                mainAxisAlignment:
-                                MainAxisAlignment.end,
-                                children: [
-                                  IconButton(
-                                    tooltip: 'Preview',
-                                    icon: const Icon(
-                                      Icons.visibility_outlined,
-                                    ),
-                                    onPressed:
-                                        () => _previewEvent(
-                                      context,
-                                      d.id,
-                                      e,
-                                    ),
-                                  ),
-                                  IconButton(
-                                    tooltip:
-                                    active
-                                        ? 'Set inactive'
-                                        : 'Set active',
-                                    icon: Icon(
-                                      active
-                                          ? Icons.toggle_on_outlined
-                                          : Icons.toggle_off_outlined,
-                                    ),
-                                    onPressed:
-                                        () => _toggleEventActive(
-                                      context,
-                                      d.id,
-                                      active,
-                                    ),
-                                  ),
-                                  IconButton(
-                                    icon: const Icon(
-                                      Icons.edit_outlined,
-                                    ),
-                                    onPressed:
-                                        () => _addOrEditEvent(
-                                      context,
-                                      eventId: d.id,
-                                      data: e,
-                                    ),
-                                  ),
-                                  IconButton(
-                                    icon: const Icon(
-                                      Icons.delete_outline,
-                                    ),
-                                    onPressed:
-                                        () => _deleteEvent(
-                                      context,
-                                      d.id,
-                                      title,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
+                            );
+                          },
                         ),
-                      ),
-                    );
-                  },
-                ),
               ),
             ],
           ),
@@ -2596,7 +3002,7 @@ enum _ReportPeriod { weekly, monthly, yearly }
 
 class _ReportsAdminTabState extends State<ReportsAdminTab> {
   bool _loading = false;
-  _ReportPeriod _selectedPeriod = _ReportPeriod.yearly;
+  _ReportPeriod _selectedPeriod = _ReportPeriod.monthly;
   Future<Map<String, dynamic>>? _reportFuture;
   Map<String, dynamic>? _lastReportData;
 
@@ -2676,9 +3082,9 @@ class _ReportsAdminTabState extends State<ReportsAdminTab> {
   }
 
   ({DateTime start, DateTime end}) _periodRange(
-      _ReportPeriod period,
-      DateTime now,
-      ) {
+    _ReportPeriod period,
+    DateTime now,
+  ) {
     final dayStart = _atStartOfDay(now);
     if (period == _ReportPeriod.weekly) {
       final weekStart = dayStart.subtract(Duration(days: dayStart.weekday - 1));
@@ -2687,9 +3093,9 @@ class _ReportsAdminTabState extends State<ReportsAdminTab> {
     if (period == _ReportPeriod.monthly) {
       final monthStart = DateTime(dayStart.year, dayStart.month, 1);
       final monthEnd =
-      (dayStart.month == 12)
-          ? DateTime(dayStart.year + 1, 1, 1)
-          : DateTime(dayStart.year, dayStart.month + 1, 1);
+          (dayStart.month == 12)
+              ? DateTime(dayStart.year + 1, 1, 1)
+              : DateTime(dayStart.year, dayStart.month + 1, 1);
       return (start: monthStart, end: monthEnd);
     }
     final yearStart = DateTime(dayStart.year, 1, 1);
@@ -2720,8 +3126,8 @@ class _ReportsAdminTabState extends State<ReportsAdminTab> {
   }
 
   Future<List<QueryDocumentSnapshot<Map<String, dynamic>>>> _safeQueryDocs(
-      Future<QuerySnapshot<Map<String, dynamic>>> Function() loader,
-      ) async {
+    Future<QuerySnapshot<Map<String, dynamic>>> Function() loader,
+  ) async {
     try {
       final snap = await loader();
       return snap.docs;
@@ -2769,47 +3175,49 @@ class _ReportsAdminTabState extends State<ReportsAdminTab> {
     ]);
 
     final storesDocs =
-    results[0] as List<QueryDocumentSnapshot<Map<String, dynamic>>>;
+        results[0] as List<QueryDocumentSnapshot<Map<String, dynamic>>>;
     final promosDocs =
-    results[1] as List<QueryDocumentSnapshot<Map<String, dynamic>>>;
+        results[1] as List<QueryDocumentSnapshot<Map<String, dynamic>>>;
     final productsDocs =
-    results[2] as List<QueryDocumentSnapshot<Map<String, dynamic>>>;
+        results[2] as List<QueryDocumentSnapshot<Map<String, dynamic>>>;
     final usersDocs =
-    results[3] as List<QueryDocumentSnapshot<Map<String, dynamic>>>;
+        results[3] as List<QueryDocumentSnapshot<Map<String, dynamic>>>;
     final reviewsDocs =
-    results[4] as List<QueryDocumentSnapshot<Map<String, dynamic>>>;
+        results[4] as List<QueryDocumentSnapshot<Map<String, dynamic>>>;
     final eventsDocs =
-    results[5] as List<QueryDocumentSnapshot<Map<String, dynamic>>>;
+        results[5] as List<QueryDocumentSnapshot<Map<String, dynamic>>>;
     final pricesDocs =
-    results[6] as List<QueryDocumentSnapshot<Map<String, dynamic>>>;
+        results[6] as List<QueryDocumentSnapshot<Map<String, dynamic>>>;
     final ordersDocs =
-    results[7] as List<QueryDocumentSnapshot<Map<String, dynamic>>>;
+        results[7] as List<QueryDocumentSnapshot<Map<String, dynamic>>>;
 
     final stores =
-    storesDocs
-        .where((d) {
-      if (!scoped) return true;
-      return d.id.toLowerCase() == cleanStoreIdLower;
-    })
-        .where((d) => _inRange(_docTime(d.data()), start, end))
-        .toList();
+        storesDocs
+            .where((d) {
+              if (!scoped) return true;
+              return d.id.toLowerCase() == cleanStoreIdLower;
+            })
+            .where((d) => _inRange(_docTime(d.data()), start, end))
+            .toList();
 
     final promotions =
-    promosDocs
-        .where((d) {
-      if (!scoped) return true;
-      final sid = (d.data()['storeId'] ?? '').toString().trim().toLowerCase();
-      return sid == cleanStoreIdLower;
-    })
-        .where((d) => _inRange(_docTime(d.data()), start, end))
-        .toList();
+        promosDocs
+            .where((d) {
+              if (!scoped) return true;
+              final sid =
+                  (d.data()['storeId'] ?? '').toString().trim().toLowerCase();
+              return sid == cleanStoreIdLower;
+            })
+            .where((d) => _inRange(_docTime(d.data()), start, end))
+            .toList();
 
     final scopedProducts =
-    productsDocs.where((d) {
-      if (!scoped) return true;
-      final sid = (d.data()['storeId'] ?? '').toString().trim().toLowerCase();
-      return sid == cleanStoreIdLower;
-    }).toList();
+        productsDocs.where((d) {
+          if (!scoped) return true;
+          final sid =
+              (d.data()['storeId'] ?? '').toString().trim().toLowerCase();
+          return sid == cleanStoreIdLower;
+        }).toList();
 
     final scopedProductIds = <String>{};
     for (final p in scopedProducts) {
@@ -2834,11 +3242,12 @@ class _ReportsAdminTabState extends State<ReportsAdminTab> {
       if (scopedProductIds.isEmpty) {
         for (final productDoc in productsDocs) {
           try {
-            final snap = await productDoc.reference
-                .collection('prices')
-                .where('storeId', isEqualTo: cleanStoreId)
-                .limit(1)
-                .get();
+            final snap =
+                await productDoc.reference
+                    .collection('prices')
+                    .where('storeId', isEqualTo: cleanStoreId)
+                    .limit(1)
+                    .get();
 
             if (snap.docs.isNotEmpty) {
               scopedProductIds.add(productDoc.id);
@@ -2855,48 +3264,54 @@ class _ReportsAdminTabState extends State<ReportsAdminTab> {
     }
 
     final allStoreProducts =
-    scoped
-        ? productsDocs.where((d) => scopedProductIds.contains(d.id)).toList()
-        : productsDocs;
+        scoped
+            ? productsDocs
+                .where((d) => scopedProductIds.contains(d.id))
+                .toList()
+            : productsDocs;
 
     final products =
-    allStoreProducts
-        .where((d) => _inRange(_docTime(d.data()), start, end))
-        .toList();
+        allStoreProducts
+            .where((d) => _inRange(_docTime(d.data()), start, end))
+            .toList();
 
     final users =
-    usersDocs
-        .where((d) {
-      if (!scoped) return true;
-      final sid = (d.data()['storeId'] ?? '').toString().trim().toLowerCase();
-      return sid == cleanStoreIdLower;
-    })
-        .where((d) => _inRange(_docTime(d.data()), start, end))
-        .toList();
+        usersDocs
+            .where((d) {
+              if (!scoped) return true;
+              final sid =
+                  (d.data()['storeId'] ?? '').toString().trim().toLowerCase();
+              return sid == cleanStoreIdLower;
+            })
+            .where((d) => _inRange(_docTime(d.data()), start, end))
+            .toList();
 
     final reviews =
-    reviewsDocs
-        .where((d) {
-      if (!scoped) return true;
-      final review = d.data();
-      final sid = (review['storeId'] ?? '').toString().trim().toLowerCase();
-      if (sid == cleanStoreIdLower) return true;
+        reviewsDocs
+            .where((d) {
+              if (!scoped) return true;
+              final review = d.data();
+              final sid =
+                  (review['storeId'] ?? '').toString().trim().toLowerCase();
+              if (sid == cleanStoreIdLower) return true;
+              if (sid.isNotEmpty) return false;
 
-      final pid = (review['productId'] ?? '').toString().trim();
-      return scopedProductIds.contains(pid);
-    })
-        .where((d) => _inRange(_docTime(d.data()), start, end))
-        .toList();
+              final pid = (review['productId'] ?? '').toString().trim();
+              return scopedProductIds.contains(pid);
+            })
+            .where((d) => _inRange(_docTime(d.data()), start, end))
+            .toList();
 
     final events =
-    eventsDocs
-        .where((d) {
-      if (!scoped) return true;
-      final sid = (d.data()['storeId'] ?? '').toString().trim().toLowerCase();
-      return sid == cleanStoreIdLower;
-    })
-        .where((d) => _inRange(_docTime(d.data()), start, end))
-        .toList();
+        eventsDocs
+            .where((d) {
+              if (!scoped) return true;
+              final sid =
+                  (d.data()['storeId'] ?? '').toString().trim().toLowerCase();
+              return sid == cleanStoreIdLower;
+            })
+            .where((d) => _inRange(_docTime(d.data()), start, end))
+            .toList();
 
     final productIds = <String>{};
     final productCategoryById = <String, String>{};
@@ -2908,7 +3323,7 @@ class _ReportsAdminTabState extends State<ReportsAdminTab> {
 
       final category = (data['category'] ?? 'Uncategorized').toString().trim();
       productCategoryById[product.id] =
-      category.isEmpty ? 'Uncategorized' : category;
+          category.isEmpty ? 'Uncategorized' : category;
     }
 
     for (final priceDoc in pricesDocs) {
@@ -2983,7 +3398,10 @@ class _ReportsAdminTabState extends State<ReportsAdminTab> {
           orderRevenue += lineTotal;
           orderItemQty += qty;
 
-          final category = (productCategoryById[pid] ?? 'Uncategorized').trim();
+          final category =
+              (item['category'] ?? productCategoryById[pid] ?? 'Uncategorized')
+                  .toString()
+                  .trim();
           final safeCategory = category.isEmpty ? 'Uncategorized' : category;
 
           categoryItemCount[safeCategory] =
@@ -3072,7 +3490,11 @@ class _ReportsAdminTabState extends State<ReportsAdminTab> {
         thisStoreItemQty += qty;
 
         final category =
-        (productCategoryById[itemProductId] ?? 'Uncategorized').trim();
+            (item['category'] ??
+                    productCategoryById[itemProductId] ??
+                    'Uncategorized')
+                .toString()
+                .trim();
         final safeCategory = category.isEmpty ? 'Uncategorized' : category;
 
         categoryItemCount[safeCategory] =
@@ -3110,9 +3532,12 @@ class _ReportsAdminTabState extends State<ReportsAdminTab> {
             if (qty <= 0) qty = 1;
 
             final category =
-                (productCategoryById[pid] ?? 'Uncategorized').trim();
-            final safeCategory =
-                category.isEmpty ? 'Uncategorized' : category;
+                (item['category'] ??
+                        productCategoryById[pid] ??
+                        'Uncategorized')
+                    .toString()
+                    .trim();
+            final safeCategory = category.isEmpty ? 'Uncategorized' : category;
             categoryItemCount[safeCategory] =
                 (categoryItemCount[safeCategory] ?? 0) + qty;
             categoriesInOrder.add(safeCategory);
@@ -3137,56 +3562,20 @@ class _ReportsAdminTabState extends State<ReportsAdminTab> {
       });
     }
     topCategoryStats.sort((a, b) {
-      final byItems =
-          ((b['items'] as int?) ?? 0).compareTo((a['items'] as int?) ?? 0);
-      if (byItems != 0) return byItems;
-      return ((b['orders'] as int?) ?? 0).compareTo(
-        (a['orders'] as int?) ?? 0,
+      final byItems = ((b['items'] as int?) ?? 0).compareTo(
+        (a['items'] as int?) ?? 0,
       );
+      if (byItems != 0) return byItems;
+      return ((b['orders'] as int?) ?? 0).compareTo((a['orders'] as int?) ?? 0);
     });
 
     if (scoped) {
-      bool loadedFromCache = false;
       try {
-        final cacheSnap =
-            await db
-                .collection('stores')
-                .doc(cleanStoreId)
-                .collection('report_cache')
-                .doc(periodCode)
-                .get();
-        final cache = cacheSnap.data() ?? const <String, dynamic>{};
-        final cacheOrders = _asInt(cache['orders'], fallback: 0);
-        final cacheItems = _asInt(cache['orderItems'], fallback: 0);
-        final cacheRevenue = _asDouble(cache['revenue'], fallback: 0.0);
-        final cacheCatsRaw = cache['topCategoryStats'];
-        final cacheCats = <Map<String, dynamic>>[];
-        if (cacheCatsRaw is List) {
-          for (final row in cacheCatsRaw) {
-            if (row is Map) {
-              cacheCats.add(Map<String, dynamic>.from(row));
-            }
-          }
-        }
-        if (cacheOrders > 0 || cacheItems > 0 || cacheRevenue > 0) {
-          totalOrders = cacheOrders;
-          totalOrderItems = cacheItems;
-          totalRevenue = cacheRevenue;
-          topCategoryStats
-            ..clear()
-            ..addAll(cacheCats);
-          ordersInPeriod = totalOrders;
-          loadedFromCache = true;
-        }
-      } on FirebaseException {
-        // Ignore and fallback to live summary.
-      }
-
-      if (!loadedFromCache) {
         final summary = await widget.svc.storeScopedOrderSummary(
           storeId: cleanStoreId,
           startInclusive: start,
           endExclusive: end,
+          forceRefresh: true,
         );
         totalOrders = (summary['orders'] as int?) ?? 0;
         totalOrderItems = (summary['items'] as int?) ?? 0;
@@ -3200,6 +3589,43 @@ class _ReportsAdminTabState extends State<ReportsAdminTab> {
           ..clear()
           ..addAll(fromSummary);
         ordersInPeriod = totalOrders;
+      } on FirebaseException {
+        // Live summary failed: fallback to cache snapshot if available.
+        try {
+          final cacheSnap =
+              await db
+                  .collection('stores')
+                  .doc(cleanStoreId)
+                  .collection('report_cache')
+                  .doc(periodCode)
+                  .get();
+          final cache = cacheSnap.data() ?? const <String, dynamic>{};
+          final cacheOrders = _asInt(cache['orders'], fallback: 0);
+          final cacheItems = _asInt(cache['orderItems'], fallback: 0);
+          final cacheRevenue = _asDouble(cache['revenue'], fallback: 0.0);
+          final cacheCatsRaw = cache['topCategoryStats'];
+          final cacheCats = <Map<String, dynamic>>[];
+          if (cacheCatsRaw is List) {
+            for (final row in cacheCatsRaw) {
+              if (row is Map) {
+                cacheCats.add(Map<String, dynamic>.from(row));
+              }
+            }
+          }
+          if (cacheOrders > 0 || cacheItems > 0 || cacheRevenue > 0) {
+            totalOrders = cacheOrders;
+            totalOrderItems = cacheItems;
+            totalRevenue = cacheRevenue;
+            if (cacheCats.isNotEmpty) {
+              topCategoryStats
+                ..clear()
+                ..addAll(cacheCats);
+            }
+            ordersInPeriod = totalOrders;
+          }
+        } on FirebaseException {
+          // Keep current computed values.
+        }
       }
     }
 
@@ -3277,8 +3703,8 @@ class _ReportsAdminTabState extends State<ReportsAdminTab> {
     final reviews = data['reviews'] as int;
     final revenue = (data['revenue'] as num).toDouble();
     final topCategoryStats =
-    (data['topCategoryStats'] as List? ?? const [])
-        .cast<Map<String, dynamic>>();
+        (data['topCategoryStats'] as List? ?? const [])
+            .cast<Map<String, dynamic>>();
     final avgRevenuePerOrder = orders > 0 ? revenue / orders : 0.0;
 
     pdf.addPage(
@@ -3287,122 +3713,124 @@ class _ReportsAdminTabState extends State<ReportsAdminTab> {
         margin: const pw.EdgeInsets.all(26),
         build:
             (context) => [
-          pw.Container(
-            padding: const pw.EdgeInsets.all(14),
-            decoration: pw.BoxDecoration(
-              color: PdfColors.grey100,
-              borderRadius: pw.BorderRadius.circular(12),
-            ),
-            child: pw.Column(
-              crossAxisAlignment: pw.CrossAxisAlignment.start,
-              children: [
-                pw.Text(
-                  'VOCAMART ADMIN REPORT',
-                  style: pw.TextStyle(
-                    fontSize: 20,
-                    fontWeight: pw.FontWeight.bold,
-                    color: PdfColors.black,
-                  ),
+              pw.Container(
+                padding: const pw.EdgeInsets.all(14),
+                decoration: pw.BoxDecoration(
+                  color: PdfColors.grey100,
+                  borderRadius: pw.BorderRadius.circular(12),
                 ),
-                pw.SizedBox(height: 8),
-                pw.Text(
-                  'Period: $periodLabel ($periodText)',
-                  style: pw.TextStyle(
-                    fontSize: 11,
-                    color: PdfColors.grey700,
-                    fontWeight: pw.FontWeight.bold,
-                  ),
-                ),
-                pw.SizedBox(height: 4),
-                pw.Text(
-                  'Generated on: ${_dateTime(generatedAt)}',
-                  style: pw.TextStyle(
-                    fontSize: 10,
-                    color: PdfColors.grey700,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          pw.SizedBox(height: 18),
-          pw.Text(
-            'Key Metrics',
-            style: pw.TextStyle(
-              fontSize: 15,
-              fontWeight: pw.FontWeight.bold,
-            ),
-          ),
-          pw.SizedBox(height: 10),
-          pw.Table(
-            border: pw.TableBorder.all(color: PdfColors.grey300),
-            columnWidths: {
-              0: const pw.FlexColumnWidth(3),
-              1: const pw.FlexColumnWidth(2),
-            },
-            children: [
-              pw.TableRow(
-                decoration: const pw.BoxDecoration(
-                  color: PdfColors.blue100,
-                ),
-                children: [
-                  _pdfCell('Metric', bold: true),
-                  _pdfCell('Value', bold: true),
-                ],
-              ),
-              _pdfRow('Revenue', _money(revenue)),
-              _pdfRow('Orders', '$orders'),
-              _pdfRow('Order items', '$orderItems'),
-              _pdfRow('Average order value', _money(avgRevenuePerOrder)),
-              _pdfRow('Products', '$products'),
-              _pdfRow('Reviews', '$reviews'),
-            ],
-          ),
-          pw.SizedBox(height: 14),
-          pw.Text(
-            'Top Categories (By Ordered Items)',
-            style: pw.TextStyle(
-              fontSize: 13,
-              fontWeight: pw.FontWeight.bold,
-            ),
-          ),
-          pw.SizedBox(height: 8),
-          if (topCategoryStats.isEmpty)
-            pw.Text('No category order data in selected period.')
-          else
-            pw.Table(
-              border: pw.TableBorder.all(color: PdfColors.grey300),
-              columnWidths: {
-                0: const pw.FlexColumnWidth(3),
-                1: const pw.FlexColumnWidth(2),
-                2: const pw.FlexColumnWidth(2),
-              },
-              children: [
-                pw.TableRow(
-                  decoration: const pw.BoxDecoration(
-                    color: PdfColors.blue100,
-                  ),
+                child: pw.Column(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
                   children: [
-                    _pdfCell('Category', bold: true),
-                    _pdfCell('Orders', bold: true),
-                    _pdfCell('Items', bold: true),
+                    pw.Text(
+                      'VOCAMART ADMIN REPORT',
+                      style: pw.TextStyle(
+                        fontSize: 20,
+                        fontWeight: pw.FontWeight.bold,
+                        color: PdfColors.black,
+                      ),
+                    ),
+                    pw.SizedBox(height: 8),
+                    pw.Text(
+                      'Period: $periodLabel ($periodText)',
+                      style: pw.TextStyle(
+                        fontSize: 11,
+                        color: PdfColors.grey700,
+                        fontWeight: pw.FontWeight.bold,
+                      ),
+                    ),
+                    pw.SizedBox(height: 4),
+                    pw.Text(
+                      'Generated on: ${_dateTime(generatedAt)}',
+                      style: pw.TextStyle(
+                        fontSize: 10,
+                        color: PdfColors.grey700,
+                      ),
+                    ),
                   ],
                 ),
-                for (final row in topCategoryStats)
+              ),
+              pw.SizedBox(height: 18),
+              pw.Text(
+                'Key Metrics',
+                style: pw.TextStyle(
+                  fontSize: 15,
+                  fontWeight: pw.FontWeight.bold,
+                ),
+              ),
+              pw.SizedBox(height: 10),
+              pw.Table(
+                border: pw.TableBorder.all(color: PdfColors.grey300),
+                columnWidths: {
+                  0: const pw.FlexColumnWidth(3),
+                  1: const pw.FlexColumnWidth(2),
+                },
+                children: [
                   pw.TableRow(
+                    decoration: const pw.BoxDecoration(
+                      color: PdfColors.blue100,
+                    ),
                     children: [
-                      _pdfCell((row['category'] ?? '-').toString()),
-                      _pdfCell('${row['orders'] ?? 0}'),
-                      _pdfCell('${row['items'] ?? 0}'),
+                      _pdfCell('Metric', bold: true),
+                      _pdfCell('Value', bold: true),
                     ],
                   ),
-              ],
-            ),
-          pw.SizedBox(height: 14),
-          pw.Text(
-            'This report intentionally shows only essential numbers for quick decision making.',
-            style: const pw.TextStyle(fontSize: 10, lineSpacing: 2),
-          ),
-        ],
+                  _pdfRow('Revenue', _money(revenue)),
+                  _pdfRow('Orders', '$orders'),
+                  _pdfRow('Order items', '$orderItems'),
+                  _pdfRow('Average order value', _money(avgRevenuePerOrder)),
+                  _pdfRow('Products', '$products'),
+                  _pdfRow('Reviews', '$reviews'),
+                ],
+              ),
+              pw.SizedBox(height: 14),
+              pw.Text(
+                'Top Categories (By Ordered Items)',
+                style: pw.TextStyle(
+                  fontSize: 13,
+                  fontWeight: pw.FontWeight.bold,
+                ),
+              ),
+              pw.SizedBox(height: 8),
+              if (topCategoryStats.isEmpty)
+                pw.Text('No category order data in selected period.')
+              else
+                pw.Table(
+                  border: pw.TableBorder.all(color: PdfColors.grey300),
+                  columnWidths: {
+                    0: const pw.FlexColumnWidth(3),
+                    1: const pw.FlexColumnWidth(2),
+                    2: const pw.FlexColumnWidth(2),
+                  },
+                  children: [
+                    pw.TableRow(
+                      decoration: const pw.BoxDecoration(
+                        color: PdfColors.blue100,
+                      ),
+                      children: [
+                        _pdfCell('Category', bold: true),
+                        _pdfCell('Orders', bold: true),
+                        _pdfCell('Items', bold: true),
+                      ],
+                    ),
+                    for (final row in topCategoryStats)
+                      pw.TableRow(
+                        children: [
+                          _pdfCell((row['category'] ?? '-').toString()),
+                          _pdfCell(
+                            row['orders'] is num ? '${row['orders']}' : '-',
+                          ),
+                          _pdfCell('${row['items'] ?? 0}'),
+                        ],
+                      ),
+                  ],
+                ),
+              pw.SizedBox(height: 14),
+              pw.Text(
+                'This report intentionally shows only essential numbers for quick decision making.',
+                style: const pw.TextStyle(fontSize: 10, lineSpacing: 2),
+              ),
+            ],
       ),
     );
 
@@ -3472,8 +3900,8 @@ class _ReportsAdminTabState extends State<ReportsAdminTab> {
         final ordersInPeriod = (data['ordersInPeriod'] ?? 0) as int;
         final orderItems = (data['orderItems'] ?? 0) as int;
         final topCategoryStats =
-        (data['topCategoryStats'] as List? ?? const [])
-            .cast<Map<String, dynamic>>();
+            (data['topCategoryStats'] as List? ?? const [])
+                .cast<Map<String, dynamic>>();
         final avgOrderValue = orders > 0 ? revenue / orders : 0.0;
         final periodLabel = (data['periodLabel'] ?? 'Period').toString();
         final periodText = (data['periodText'] ?? '-').toString();
@@ -3609,12 +4037,15 @@ class _ReportsAdminTabState extends State<ReportsAdminTab> {
                   else
                     ...topCategoryStats.map((row) {
                       final category = (row['category'] ?? '-').toString();
-                      final cOrders = (row['orders'] ?? 0).toString();
                       final cItems = (row['items'] ?? 0).toString();
+                      final hasOrders = row['orders'] is num;
+                      final cOrders = hasOrders ? row['orders'].toString() : '';
                       return Padding(
                         padding: const EdgeInsets.only(bottom: 6),
                         child: Text(
-                          '$category: $cOrders orders, $cItems items',
+                          hasOrders
+                              ? '$category: $cOrders orders, $cItems items'
+                              : '$category: $cItems items',
                           style: const TextStyle(fontWeight: FontWeight.w700),
                         ),
                       );
@@ -3793,3 +4224,4 @@ pw.Widget _pdfCell(String text, {bool bold = false}) {
     ),
   );
 }
+

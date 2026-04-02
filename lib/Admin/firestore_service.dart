@@ -76,6 +76,84 @@ class FirestoreService {
         d == 'canceled';
   }
 
+  bool _isPackedState(String raw) {
+    final s = raw.trim().toLowerCase();
+    return s == 'packed' || s == 'packed done' || s == 'done';
+  }
+
+  String _packStateForStoreId(Map packMap, String storeId) {
+    final clean = storeId.trim();
+    if (clean.isEmpty) return 'Pending';
+    final exact = _asText(packMap[clean]);
+    if (exact.isNotEmpty) return exact;
+
+    final target = clean.toLowerCase();
+    for (final entry in packMap.entries) {
+      final key = entry.key.toString().trim().toLowerCase();
+      if (key == target) {
+        final value = _asText(entry.value);
+        if (value.isNotEmpty) return value;
+      }
+    }
+    return 'Pending';
+  }
+
+  bool _isOrderAtOrPastPacked(Map<String, dynamic> order) {
+    final status = _asText(order['status']).trim().toLowerCase();
+    final deliveryStatus = _asText(order['deliveryStatus']).trim().toLowerCase();
+    return status == 'packed' ||
+        status == 'to receive' ||
+        status == 'completed' ||
+        status == 'delivered' ||
+        deliveryStatus == 'on the way' ||
+        deliveryStatus == 'delivered';
+  }
+
+  bool _allStoresPackedInOrder(Map<String, dynamic> order) {
+    if (_isOrderAtOrPastPacked(order)) return true;
+
+    final items = (order['items'] as List?) ?? const [];
+    final itemStoreIds = <String>{};
+
+    for (final raw in items) {
+      if (raw is! Map) continue;
+      final sid = _asText(raw['storeId']).trim();
+      if (sid.isNotEmpty) itemStoreIds.add(sid);
+    }
+
+    final storeIds = <String>{};
+    if (itemStoreIds.isNotEmpty) {
+      storeIds.addAll(itemStoreIds);
+    }
+
+    final rawStoreIds = order['storeIds'];
+    if (storeIds.isEmpty && rawStoreIds is List) {
+      for (final sid in rawStoreIds) {
+        final clean = sid.toString().trim();
+        if (clean.isNotEmpty) storeIds.add(clean);
+      }
+    }
+
+    final orderStoreId = _asText(order['storeId']).trim();
+    if (storeIds.isEmpty && orderStoreId.isNotEmpty) storeIds.add(orderStoreId);
+
+    final rawPackMap = order['storePackStatusByStore'];
+    final packMap = rawPackMap is Map ? rawPackMap : const {};
+    if (storeIds.isEmpty && packMap.isNotEmpty) {
+      for (final entry in packMap.entries) {
+        final sid = entry.key.toString().trim();
+        if (sid.isNotEmpty) storeIds.add(sid);
+      }
+    }
+    if (storeIds.isEmpty) return true;
+
+    for (final sid in storeIds) {
+      final state = _packStateForStoreId(packMap, sid);
+      if (!_isPackedState(state)) return false;
+    }
+    return true;
+  }
+
   String _userIdFromOrderPath(String orderPath) {
     final parts = orderPath.split('/');
     if (parts.length >= 4 && parts[0] == 'users' && parts[2] == 'orders') {
@@ -770,8 +848,10 @@ class FirestoreService {
   bool _orderContainsProduct({
     required Map<String, dynamic> order,
     required String productId,
+    String? storeId,
   }) {
     final cleanProductId = productId.trim();
+    final cleanStoreId = (storeId ?? '').trim().toLowerCase();
     if (cleanProductId.isEmpty) return false;
 
     final rawItems = order['items'];
@@ -782,14 +862,37 @@ class FirestoreService {
       final itemProductId = _asText(item['productId']).trim();
       final qty = _asInt(item['qty'], fallback: 0);
       if (itemProductId == cleanProductId && qty > 0) {
-        return true;
+        if (cleanStoreId.isEmpty) return true;
+
+        final itemStoreId = _asText(item['storeId']).trim().toLowerCase();
+        if (itemStoreId.isNotEmpty) {
+          if (itemStoreId == cleanStoreId) return true;
+          continue;
+        }
+
+        final orderStoreId = _asText(order['storeId']).trim().toLowerCase();
+        if (orderStoreId.isNotEmpty && orderStoreId == cleanStoreId) {
+          return true;
+        }
+
+        final rawStoreIds = order['storeIds'];
+        if (rawStoreIds is List) {
+          final storeIds =
+              rawStoreIds
+                  .map((e) => e.toString().trim().toLowerCase())
+                  .where((e) => e.isNotEmpty)
+                  .toList();
+          if (storeIds.length == 1 && storeIds.first == cleanStoreId) {
+            return true;
+          }
+        }
       }
     }
 
     return false;
   }
 
-  Future<bool> currentUserCanReviewProduct(String productId) async {
+  Future<bool> currentUserCanReviewProduct(String productId, {String? storeId}) async {
     final user = _currentUser;
     final cleanProductId = productId.trim();
     if (user == null || user.isAnonymous || cleanProductId.isEmpty) {
@@ -802,7 +905,7 @@ class FirestoreService {
     for (final doc in ordersSnap.docs) {
       final order = doc.data();
       if (!_isDeliveredForReview(order)) continue;
-      if (_orderContainsProduct(order: order, productId: cleanProductId)) {
+      if (_orderContainsProduct(order: order, productId: cleanProductId, storeId: storeId)) {
         return true;
       }
     }
@@ -810,9 +913,10 @@ class FirestoreService {
     return false;
   }
 
-  Future<String?> _currentUserReviewDocIdForProduct(String productId) async {
+  Future<String?> _currentUserReviewDocIdForProduct(String productId, {String? storeId}) async {
     final user = _currentUser;
     final cleanProductId = productId.trim();
+    final cleanStoreId = (storeId ?? '').trim().toLowerCase();
     if (user == null || user.isAnonymous || cleanProductId.isEmpty) {
       return null;
     }
@@ -823,15 +927,47 @@ class FirestoreService {
             .where('userId', isEqualTo: user.uid)
             .get();
 
+    String? fallbackMatch;
     for (final doc in myReviewsSnap.docs) {
       final data = doc.data();
-      final reviewedProductId = _asText(data['productId']).trim();
+      final reviewedProductId = _asText(
+        data['productId'] ?? data['productID'] ?? data['product_id'],
+      ).trim();
+      final reviewedStoreId = _asText(data['storeId']).trim().toLowerCase();
       if (reviewedProductId == cleanProductId) {
-        return doc.id;
+        if (cleanStoreId.isEmpty || reviewedStoreId == cleanStoreId) {
+          return doc.id;
+        }
+        // Keep a fallback match by product when store id format changed/missing.
+        fallbackMatch ??= doc.id;
       }
     }
 
-    return null;
+    return fallbackMatch;
+  }
+
+  Future<Set<String>> currentUserReviewedProductKeys() async {
+    final user = _currentUser;
+    if (user == null || user.isAnonymous) return <String>{};
+
+    final snap =
+        await _db
+            .collection('product_reviews')
+            .where('userId', isEqualTo: user.uid)
+            .get();
+
+    final out = <String>{};
+    for (final doc in snap.docs) {
+      final data = doc.data();
+      final pid = _asText(
+        data['productId'] ?? data['productID'] ?? data['product_id'],
+      ).trim().toLowerCase();
+      if (pid.isEmpty) continue;
+      final sid = _asText(data['storeId']).trim().toLowerCase();
+      out.add('$pid|$sid');
+      out.add('$pid|');
+    }
+    return out;
   }
 
   Future<void> upsertReview({
@@ -840,39 +976,77 @@ class FirestoreService {
     required String productName,
     required int rating,
     required String comment,
+    String? storeId,
   }) async {
     final user = _currentUser;
     if (user == null || user.isAnonymous) return;
     final cleanProductId = productId.trim();
+    var cleanStoreId = (storeId ?? '').trim();
     if (cleanProductId.isEmpty) {
       throw StateError('Invalid product id for review.');
     }
-    final canReview = await currentUserCanReviewProduct(productId);
+
+    var canReview = await currentUserCanReviewProduct(
+      productId,
+      storeId: cleanStoreId,
+    );
+    if (!canReview && cleanStoreId.isNotEmpty) {
+      // Legacy orders can miss reliable item store mapping.
+      // In that case, allow review by product purchase proof only.
+      canReview = await currentUserCanReviewProduct(productId);
+    }
     if (!canReview) {
       throw StateError(
         'Only users who purchased and received this product can submit a review.',
       );
     }
 
+    if (cleanStoreId.isEmpty) {
+      try {
+        final productSnap =
+            await _db.collection('products').doc(cleanProductId).get();
+        cleanStoreId = _asText(productSnap.data()?['storeId']).trim();
+      } on FirebaseException {
+        // Keep empty when product lookup is unavailable.
+      }
+    }
+
     final existingReviewId = await _currentUserReviewDocIdForProduct(
       cleanProductId,
+      storeId: cleanStoreId.isEmpty ? null : cleanStoreId,
     );
-    if (reviewId == null && existingReviewId != null) {
+    if ((reviewId ?? '').trim().isEmpty && existingReviewId != null) {
       throw StateError('You already reviewed this product.');
+    }
+    final targetReviewId = (reviewId ?? '').trim();
+
+    var reviewerName = (user.displayName ?? '').trim();
+    if (reviewerName.isEmpty) {
+      try {
+        final userSnap = await _db.collection('users').doc(user.uid).get();
+        final u = userSnap.data() ?? const <String, dynamic>{};
+        reviewerName = _asText(
+          u['name'] ?? u['displayName'] ?? u['fullName'] ?? u['username'],
+        ).trim();
+      } on FirebaseException {
+        // Keep empty if profile read fails.
+      }
     }
 
     final data = {
       'productId': cleanProductId,
       'productName': productName,
+      if (cleanStoreId.isNotEmpty) 'storeId': cleanStoreId,
       'userId': user.uid,
       'userEmail': user.email ?? '',
+      'userName': reviewerName,
       'rating': rating,
       'comment': comment.trim(),
       'status': 'published',
       'updatedAt': FieldValue.serverTimestamp(),
     };
 
-    if (reviewId == null) {
+    if (targetReviewId.isEmpty) {
       await _db.collection('product_reviews').add({
         ...data,
         'createdAt': FieldValue.serverTimestamp(),
@@ -880,7 +1054,7 @@ class FirestoreService {
     } else {
       await _db
           .collection('product_reviews')
-          .doc(reviewId)
+          .doc(targetReviewId)
           .set(data, SetOptions(merge: true));
     }
   }
@@ -1204,7 +1378,7 @@ class FirestoreService {
     final db = FirebaseFirestore.instance;
     final productsDocs = await _safeQueryDocs(() => db.collection('products').get());
     final pricesDocs = await _safeQueryDocs(() => db.collectionGroup('prices').get());
-    final ordersDocs = await ordersAllForAdmin(storeId: cleanStoreId);
+    final ordersDocs = await ordersAllForAdmin(forceRefresh: forceRefresh);
 
     final productCategoryById = <String, String>{};
     final productStoreIds = <String, Set<String>>{};
@@ -1241,8 +1415,10 @@ class FirestoreService {
       if (!_inRange(orderTime, startInclusive, endExclusive)) continue;
 
       final items = (order['items'] as List?) ?? const [];
-      final total = (order['total'] is num) ? (order['total'] as num).toDouble() : 0.0;
-      final orderStoreId = (order['storeId'] ?? '').toString().trim().toLowerCase();
+      final total =
+          (order['total'] is num) ? (order['total'] as num).toDouble() : 0.0;
+      final orderStoreId =
+          (order['storeId'] ?? '').toString().trim().toLowerCase();
 
       final storeQty = <String, int>{};
       int totalQty = 0;
@@ -1261,15 +1437,20 @@ class FirestoreService {
         if (qty <= 0) qty = 1;
         totalQty += qty;
 
-        final itemStoreId = (item['storeId'] ?? '').toString().trim().toLowerCase();
+        final itemStoreId =
+            (item['storeId'] ?? '').toString().trim().toLowerCase();
         final candidates = <String>{};
         if (itemStoreId.isNotEmpty) candidates.add(itemStoreId);
         candidates.addAll(productStoreIds[pid] ?? const <String>{});
 
         String targetStoreId = '';
-        if (candidates.length == 1) {
+        if (itemStoreId.isNotEmpty) {
+          // Prefer explicit item-level store assignment captured at checkout.
+          targetStoreId = itemStoreId;
+        } else if (candidates.length == 1) {
           targetStoreId = candidates.first;
-        } else if (orderStoreId.isNotEmpty && candidates.contains(orderStoreId)) {
+        } else if (orderStoreId.isNotEmpty &&
+            candidates.contains(orderStoreId)) {
           targetStoreId = orderStoreId;
         } else if (orderStoreId.isNotEmpty && candidates.isEmpty) {
           targetStoreId = orderStoreId;
@@ -1280,7 +1461,10 @@ class FirestoreService {
 
         if (targetStoreId != cleanStoreLower) continue;
         storeQty[targetStoreId] = (storeQty[targetStoreId] ?? 0) + qty;
-        final category = (productCategoryById[pid] ?? 'Uncategorized').trim();
+        final category =
+            (item['category'] ?? productCategoryById[pid] ?? 'Uncategorized')
+                .toString()
+                .trim();
         final safeCategory = category.isEmpty ? 'Uncategorized' : category;
         categoryItemCount[safeCategory] =
             (categoryItemCount[safeCategory] ?? 0) + qty;
@@ -1292,7 +1476,8 @@ class FirestoreService {
       totalOrders += 1;
       final qtyForStore = storeQty.values.fold<int>(0, (a, b) => a + b);
       totalItems += qtyForStore;
-      final revenueShare = (totalQty > 0) ? (total * (qtyForStore / totalQty)) : 0.0;
+      final revenueShare =
+          (totalQty > 0) ? (total * (qtyForStore / totalQty)) : 0.0;
       totalRevenue += revenueShare;
 
       for (final category in categoriesInStoreOrder) {
@@ -1650,6 +1835,9 @@ class FirestoreService {
     if (normalized == 'to ship' || normalized == 'assigned') {
       nextStatus = 'To Ship';
       nextDeliveryStatus = 'Assigned';
+    } else if (normalized == 'packed' || normalized == 'packed done') {
+      nextStatus = 'Packed';
+      nextDeliveryStatus = 'Assigned';
     } else if (normalized == 'processing') {
       nextStatus = 'Processing';
       nextDeliveryStatus = 'Assigned';
@@ -1711,12 +1899,84 @@ class FirestoreService {
       nextStatus = 'Completed';
     } else {
       nextDeliveryStatus = 'Assigned';
-      nextStatus = 'To Ship';
+      nextStatus = _allStoresPackedInOrder(data) ? 'Packed' : 'To Ship';
     }
 
     await updateOrderByPath(
       orderPath: orderPath,
       data: {'deliveryStatus': nextDeliveryStatus, 'status': nextStatus},
+    );
+  }
+
+  Future<void> updateStorePackStatusByPath({
+    required String orderPath,
+    required String storeId,
+    required bool packed,
+  }) async {
+    final cleanStoreId = storeId.trim();
+    if (cleanStoreId.isEmpty) {
+      throw StateError('Invalid store id for packing update.');
+    }
+
+    final snap = await _db.doc(orderPath).get();
+    final order = snap.data() ?? const <String, dynamic>{};
+    if (order.isEmpty) {
+      throw StateError('Order not found.');
+    }
+
+    final items = (order['items'] as List?) ?? const [];
+    final hasThisStoreItems = items.any((raw) {
+      if (raw is! Map) return false;
+      final sid = _asText(raw['storeId']).trim();
+      return sid == cleanStoreId;
+    });
+    final orderStoreId = _asText(order['storeId']).trim();
+    final scopedToStore =
+        hasThisStoreItems || (orderStoreId.isNotEmpty && orderStoreId == cleanStoreId);
+    if (!scopedToStore) {
+      throw StateError('This order does not contain items for your store.');
+    }
+
+    final statusValue = packed ? 'Packed' : 'Pending';
+    final currentPackMapRaw = order['storePackStatusByStore'];
+    final currentPackMap =
+        currentPackMapRaw is Map
+            ? Map<String, dynamic>.from(currentPackMapRaw)
+            : <String, dynamic>{};
+    currentPackMap[cleanStoreId] = statusValue;
+
+    final mergedOrder = <String, dynamic>{
+      ...order,
+      'storePackStatusByStore': currentPackMap,
+    };
+    final allPackedNow = _allStoresPackedInOrder(mergedOrder);
+    final currentStatus = _asText(order['status']);
+    final currentDeliveryStatus = _asText(order['deliveryStatus']);
+    final currentStatusLower = currentStatus.trim().toLowerCase();
+    final currentDeliveryLower = currentDeliveryStatus.trim().toLowerCase();
+    final isFinal = _isFinalOrderState(
+      status: currentStatus,
+      deliveryStatus: currentDeliveryStatus,
+    );
+
+    final payload = <String, dynamic>{
+      'storePackStatusByStore.$cleanStoreId': statusValue,
+      'storePackUpdatedAtByStore.$cleanStoreId': FieldValue.serverTimestamp(),
+    };
+    if (!isFinal &&
+        currentDeliveryLower != 'on the way' &&
+        currentDeliveryLower != 'delivered') {
+      if (allPackedNow) {
+        payload['status'] = 'Packed';
+      } else if (currentStatusLower == 'packed' ||
+          currentStatusLower == 'to ship') {
+        payload['status'] = 'To Ship';
+      }
+    }
+
+    await updateOrderByPath(
+      orderPath: orderPath,
+      data: payload,
     );
   }
 
@@ -1735,6 +1995,11 @@ class FirestoreService {
     )) {
       throw StateError('Delivered orders cannot be reassigned.');
     }
+    if (!_allStoresPackedInOrder(orderSnap.data() ?? const {})) {
+      throw StateError(
+        'Store packing is not finished yet. Mark all stores as Packed Done before assigning delivery.',
+      );
+    }
     final oldDeliveryUid = _asText(orderSnap.data()?['deliveryUid']);
 
     final existingFee = _asDouble(
@@ -1747,7 +2012,7 @@ class FirestoreService {
       'deliveryUid': deliveryUid,
       'deliveryEmail': deliveryEmail,
       'deliveryStatus': 'Assigned',
-      'status': 'To Ship',
+      'status': 'Packed',
       'deliveryFee': existingFee,
       'updatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
@@ -1759,11 +2024,8 @@ class FirestoreService {
         .doc(_orderKeyFromPath(orderPath));
 
     final total = _asDouble(orderSnap.data()?['total']);
-    final status = 'To Ship';
-    final deliveryStatus = _asText(
-      orderSnap.data()?['deliveryStatus'],
-      fallback: 'Assigned',
-    );
+    const status = 'Packed';
+    const deliveryStatus = 'Assigned';
     final address = _asText(
       orderSnap.data()?['deliveryAddress'] ?? orderSnap.data()?['address'],
     );

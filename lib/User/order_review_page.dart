@@ -15,6 +15,36 @@ class OrderReviewPage extends StatefulWidget {
 class _OrderReviewPageState extends State<OrderReviewPage> {
   final _svc = FirestoreService();
   final Set<String> _submittingProductIds = <String>{};
+  final Set<String> _reviewedKeys = <String>{};
+  bool _loadingReviewed = true;
+
+  String _reviewKey(String productId, String storeId) {
+    return '${productId.trim().toLowerCase()}|${storeId.trim().toLowerCase()}';
+  }
+
+  Future<void> _loadReviewed() async {
+    try {
+      final keys = await _svc.currentUserReviewedProductKeys();
+      if (!mounted) return;
+      setState(() {
+        _reviewedKeys
+          ..clear()
+          ..addAll(keys);
+        _loadingReviewed = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _loadingReviewed = false;
+      });
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _loadReviewed();
+  }
 
   void _showMsg(String message) {
     if (!mounted) return;
@@ -24,6 +54,7 @@ class _OrderReviewPageState extends State<OrderReviewPage> {
   Future<void> _openReviewDialog({
     required String productId,
     required String productName,
+    String? purchasedStoreId,
   }) async {
     var rating = 5;
     final commentCtrl = TextEditingController();
@@ -105,14 +136,25 @@ class _OrderReviewPageState extends State<OrderReviewPage> {
                                 productName: productName,
                                 rating: rating,
                                 comment: comment,
+                                storeId: purchasedStoreId,
                               );
 
                               if (!mounted) return;
                               if (dialogContext.mounted) {
                                 Navigator.pop(dialogContext);
                               }
+                              if (mounted) {
+                                setState(() {
+                                  _reviewedKeys.add(
+                                    _reviewKey(productId, purchasedStoreId ?? ''),
+                                  );
+                                  _reviewedKeys.add(
+                                    _reviewKey(productId, ''),
+                                  );
+                                });
+                              }
                               _showMsg(
-                                'Review submitted. Admin can now see it in Reviews.',
+                                'Review saved successfully.',
                               );
                             } catch (e) {
                               _showMsg(
@@ -151,8 +193,10 @@ class _OrderReviewPageState extends State<OrderReviewPage> {
 
     for (final item in widget.order.items) {
       final pid = item.productId.trim();
-      if (pid.isEmpty || seen.contains(pid)) continue;
-      seen.add(pid);
+      final sid = item.storeId.trim().toLowerCase();
+      final key = '$pid|$sid';
+      if (pid.isEmpty || seen.contains(key)) continue;
+      seen.add(key);
       rows.add(item);
     }
 
@@ -183,6 +227,9 @@ class _OrderReviewPageState extends State<OrderReviewPage> {
               final productId = item.productId.trim();
               final productName = (product?.name ?? productId).trim();
               final isSubmitting = _submittingProductIds.contains(productId);
+              final reviewed =
+                  _reviewedKeys.contains(_reviewKey(productId, item.storeId)) ||
+                  _reviewedKeys.contains(_reviewKey(productId, ''));
               final qty = item.qty > 0 ? item.qty : 1;
 
               return Container(
@@ -212,16 +259,23 @@ class _OrderReviewPageState extends State<OrderReviewPage> {
                     ),
                     OutlinedButton.icon(
                       onPressed:
-                          isSubmitting
+                          (isSubmitting || reviewed || _loadingReviewed)
                               ? null
                               : () => _openReviewDialog(
                                 productId: productId,
                                 productName:
                                     productName.isEmpty ? productId : productName,
+                                purchasedStoreId: item.storeId,
                               ),
                       icon: const Icon(Icons.rate_review_outlined),
                       label: Text(
-                        isSubmitting ? 'Submitting...' : 'Write Review',
+                        _loadingReviewed
+                            ? 'Checking...'
+                            : reviewed
+                            ? 'Reviewed'
+                            : isSubmitting
+                            ? 'Submitting...'
+                            : 'Write Review',
                       ),
                     ),
                   ],

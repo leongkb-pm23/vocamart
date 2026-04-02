@@ -400,7 +400,10 @@ class _SuperAdminDashboardState extends State<_SuperAdminDashboard> {
         candidates.addAll(productStoreIds[pid] ?? const <String>{});
 
         String targetStoreId = '';
-        if (candidates.length == 1) {
+        if (itemStoreId.isNotEmpty) {
+          // Prefer explicit item-level store assignment captured at checkout.
+          targetStoreId = itemStoreId;
+        } else if (candidates.length == 1) {
           targetStoreId = candidates.first;
         } else if (orderStoreId.isNotEmpty && candidates.contains(orderStoreId)) {
           targetStoreId = orderStoreId;
@@ -2411,6 +2414,8 @@ class _OrdersAssignTabState extends State<_OrdersAssignTab> {
   List<QueryDocumentSnapshot<Map<String, dynamic>>> _orders = [];
   static const List<String> _statusOptions = <String>[
     'To Ship',
+    'Packed',
+    'Processing',
     'To Receive',
     'Completed',
     'Cancelled',
@@ -2458,6 +2463,7 @@ class _OrdersAssignTabState extends State<_OrdersAssignTab> {
   Future<void> _assignDriver(BuildContext context, String orderPath) async {
     final drivers =
         await FirebaseFirestore.instance.collection('delivery_staff').get();
+    if (!context.mounted) return;
 
     if (drivers.docs.isEmpty) {
       widget.onMsg('No delivery staff found');
@@ -2589,6 +2595,143 @@ class _OrdersAssignTabState extends State<_OrdersAssignTab> {
     return t.isEmpty ? fallback : t;
   }
 
+  List<Map<String, dynamic>> _orderItems(Map<String, dynamic> order) {
+    final raw = order['items'];
+    if (raw is! List) return const [];
+    final out = <Map<String, dynamic>>[];
+    for (final item in raw) {
+      if (item is Map) out.add(Map<String, dynamic>.from(item));
+    }
+    return out;
+  }
+
+  int _itemQty(Map<String, dynamic> item) {
+    final raw = item['qty'];
+    if (raw is int) return raw > 0 ? raw : 1;
+    if (raw is num) {
+      final v = raw.toInt();
+      return v > 0 ? v : 1;
+    }
+    return 1;
+  }
+
+  String _text(Object? value, {String fallback = ''}) {
+    if (value == null) return fallback;
+    final t = value.toString().trim();
+    return t.isEmpty ? fallback : t;
+  }
+
+  bool _isPackedState(String raw) {
+    final v = raw.trim().toLowerCase();
+    return v == 'packed' || v == 'packed done' || v == 'done';
+  }
+
+  bool _isOrderAtOrPastPacked(Map<String, dynamic> order) {
+    final status = _text(order['status']).toLowerCase();
+    final delivery = _text(order['deliveryStatus']).toLowerCase();
+    return status == 'packed' ||
+        status == 'to receive' ||
+        status == 'completed' ||
+        status == 'delivered' ||
+        delivery == 'on the way' ||
+        delivery == 'delivered';
+  }
+
+  String _packStateForStoreId(Map packMap, String storeId) {
+    final clean = storeId.trim();
+    if (clean.isEmpty) return 'Pending';
+    final exact = _text(packMap[clean]);
+    if (exact.isNotEmpty) return exact;
+
+    final target = clean.toLowerCase();
+    for (final entry in packMap.entries) {
+      final key = entry.key.toString().trim().toLowerCase();
+      if (key == target) {
+        final value = _text(entry.value);
+        if (value.isNotEmpty) return value;
+      }
+    }
+    return 'Pending';
+  }
+
+  List<String> _pendingPackStores(Map<String, dynamic> order) {
+    final itemStoreIds = <String>{};
+    final items = _orderItems(order);
+    for (final item in items) {
+      final sid = _text(item['storeId']);
+      if (sid.isNotEmpty) itemStoreIds.add(sid);
+    }
+    final storeIds = <String>{};
+    if (itemStoreIds.isNotEmpty) {
+      storeIds.addAll(itemStoreIds);
+    }
+    final rawStoreIds = order['storeIds'];
+    if (storeIds.isEmpty && rawStoreIds is List) {
+      for (final sid in rawStoreIds) {
+        final clean = sid.toString().trim();
+        if (clean.isNotEmpty) storeIds.add(clean);
+      }
+    }
+    final orderStoreId = _text(order['storeId']);
+    if (storeIds.isEmpty && orderStoreId.isNotEmpty) storeIds.add(orderStoreId);
+
+    final rawPackMap = order['storePackStatusByStore'];
+    final packMap = rawPackMap is Map ? rawPackMap : const {};
+    if (storeIds.isEmpty && packMap.isNotEmpty) {
+      for (final entry in packMap.entries) {
+        final sid = entry.key.toString().trim();
+        if (sid.isNotEmpty) storeIds.add(sid);
+      }
+    }
+
+    final out = <String>[];
+    for (final sid in storeIds) {
+      final state = _packStateForStoreId(packMap, sid);
+      if (!_isPackedState(state)) out.add(sid);
+    }
+    return out;
+  }
+
+  bool _allStoresPacked(Map<String, dynamic> order) {
+    if (_isOrderAtOrPastPacked(order)) return true;
+
+    final itemStoreIds = <String>{};
+    final items = _orderItems(order);
+    for (final item in items) {
+      final sid = _text(item['storeId']);
+      if (sid.isNotEmpty) itemStoreIds.add(sid);
+    }
+    final storeIds = <String>{};
+    if (itemStoreIds.isNotEmpty) {
+      storeIds.addAll(itemStoreIds);
+    }
+    final rawStoreIds = order['storeIds'];
+    if (storeIds.isEmpty && rawStoreIds is List) {
+      for (final sid in rawStoreIds) {
+        final clean = sid.toString().trim();
+        if (clean.isNotEmpty) storeIds.add(clean);
+      }
+    }
+    final orderStoreId = _text(order['storeId']);
+    if (storeIds.isEmpty && orderStoreId.isNotEmpty) storeIds.add(orderStoreId);
+
+    final rawPackMap = order['storePackStatusByStore'];
+    final packMap = rawPackMap is Map ? rawPackMap : const {};
+    if (storeIds.isEmpty && packMap.isNotEmpty) {
+      for (final entry in packMap.entries) {
+        final sid = entry.key.toString().trim();
+        if (sid.isNotEmpty) storeIds.add(sid);
+      }
+    }
+    if (storeIds.isEmpty) return true;
+
+    for (final sid in storeIds) {
+      final state = _packStateForStoreId(packMap, sid);
+      if (!_isPackedState(state)) return false;
+    }
+    return true;
+  }
+
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
@@ -2652,6 +2795,9 @@ class _OrdersAssignTabState extends State<_OrdersAssignTab> {
                 'deliveryAddress',
                 _safeText(data, 'address', '-'),
               );
+              final orderItems = _orderItems(data);
+              final allPacked = _allStoresPacked(data);
+              final pendingPackStores = _pendingPackStores(data);
 
               return Container(
                 padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
@@ -2679,8 +2825,37 @@ class _OrdersAssignTabState extends State<_OrdersAssignTab> {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'Status: $status\nDelivery: $deliveryStatus\nDriver: $deliveryEmail\nAddress: $address',
+                      'Status: $status\nDelivery: $deliveryStatus\nPacking: ${allPacked ? 'Packed Done' : 'Pending'}\nDriver: $deliveryEmail\nAddress: $address',
                     ),
+                    if (!allPacked && pendingPackStores.isNotEmpty)
+                      Text(
+                        'Pending stores: ${pendingPackStores.join(', ')}',
+                        style: const TextStyle(
+                          color: Color(0xFFEF6C00),
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    if (orderItems.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      const Text(
+                        'Purchased Products',
+                        style: TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                      const SizedBox(height: 4),
+                      ...orderItems.map((item) {
+                        final name =
+                            (item['productName'] ?? item['productId'] ?? '-')
+                                .toString()
+                                .trim();
+                        final storeName =
+                            (item['storeName'] ?? item['storeId'] ?? '')
+                                .toString()
+                                .trim();
+                        final qty = _itemQty(item);
+                        final prefix = storeName.isEmpty ? '' : '$storeName - ';
+                        return Text('• $prefix$name x$qty');
+                      }),
+                    ],
                     const SizedBox(height: 10),
                     Wrap(
                       spacing: 8,
@@ -2694,7 +2869,19 @@ class _OrdersAssignTabState extends State<_OrdersAssignTab> {
                           onPressed:
                               isFinalOrder
                                   ? null
-                                  : () => _assignDriver(context, orderPath),
+                                  : () {
+                                    if (!allPacked) {
+                                      final pending =
+                                          pendingPackStores.isEmpty
+                                              ? 'unknown store'
+                                              : pendingPackStores.join(', ');
+                                      widget.onMsg(
+                                        'Cannot assign yet. Packing still pending for: $pending',
+                                      );
+                                      return;
+                                    }
+                                    _assignDriver(context, orderPath);
+                                  },
                           child: const Text('Assign Driver'),
                         ),
                         PopupMenuButton<String>(

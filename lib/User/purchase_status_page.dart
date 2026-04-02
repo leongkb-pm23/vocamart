@@ -28,35 +28,68 @@ class PurchaseStatusPage extends StatelessWidget {
     return raw.trim().toLowerCase();
   }
 
-  bool _isToShipStatus(String raw) {
-    final s = _normalizeStatus(raw);
-    return s == 'to ship' ||
-        s == 'pending' ||
-        s == 'processing' ||
-        s == 'assigned';
+  bool _isFinalOrCancelled(String statusRaw, String deliveryStatusRaw) {
+    final s = _normalizeStatus(statusRaw);
+    final d = _normalizeStatus(deliveryStatusRaw);
+    return s == 'completed' ||
+        s == 'delivered' ||
+        s == 'cancelled' ||
+        s == 'canceled' ||
+        d == 'delivered' ||
+        d == 'cancelled' ||
+        d == 'canceled';
   }
 
-  bool _isToReceiveStatus(String raw) {
-    final s = _normalizeStatus(raw);
-    return s == 'to receive' ||
-        s == 'shipping' ||
-        s == 'on the way' ||
+  bool _isPickedUpByDeliveryMan(OrderItem order) {
+    final s = _normalizeStatus(order.status);
+    final d = _normalizeStatus(order.deliveryStatus);
+    if (_isFinalOrCancelled(order.status, order.deliveryStatus)) return false;
+    return d == 'on the way' || s == 'to receive' || s == 'shipping';
+  }
+
+  bool _isPacking(OrderItem order) {
+    final s = _normalizeStatus(order.status);
+    final d = _normalizeStatus(order.deliveryStatus);
+    if (_isFinalOrCancelled(order.status, order.deliveryStatus)) return false;
+    if (_isPickedUpByDeliveryMan(order)) return false;
+    return s == 'to ship' ||
+        s == 'packed' ||
+        s == 'pending' ||
+        s == 'processing' ||
+        d == 'assigned';
+  }
+
+  bool _isToShipOrder(OrderItem order) {
+    return _isPacking(order);
+  }
+
+  bool _isToReceiveOrder(OrderItem order) {
+    final s = _normalizeStatus(order.status);
+    final d = _normalizeStatus(order.deliveryStatus);
+    return _isPickedUpByDeliveryMan(order) ||
+        d == 'delivered' ||
         s == 'delivered' ||
         s == 'completed';
   }
 
-  Color _statusColor(String raw) {
-    final s = _normalizeStatus(raw);
-    if (s == 'completed' || s == 'delivered') return const Color(0xFF2E7D32);
-    if (s == 'shipping' || s == 'to receive' || s == 'on the way') {
+  Color _statusColor(OrderItem order) {
+    final s = _normalizeStatus(order.status);
+    final d = _normalizeStatus(order.deliveryStatus);
+    if (d == 'on the way' || s == 'to receive' || s == 'shipping') {
       return const Color(0xFF1565C0);
     }
-    if (s == 'cancelled') return const Color(0xFFC62828);
+    if (s == 'completed' || s == 'delivered') return const Color(0xFF2E7D32);
+    if (s == 'cancelled' || s == 'canceled' || d == 'cancelled' || d == 'canceled') {
+      return const Color(0xFFC62828);
+    }
     return _orange;
   }
 
-  String _displayStatus(String raw) {
-    final s = _normalizeStatus(raw);
+  String _displayStatus(OrderItem order) {
+    final s = _normalizeStatus(order.status);
+    if (s == 'packed') return 'PACKED DONE';
+    if (_isPacking(order)) return 'PACKING';
+    if (_isPickedUpByDeliveryMan(order)) return 'PICKED UP BY DELIVERY MAN';
     if (s.isEmpty) return 'TO SHIP';
     if (s == 'to ship') return 'TO SHIP';
     if (s == 'to receive') return 'TO RECEIVE';
@@ -68,14 +101,14 @@ class PurchaseStatusPage extends StatelessWidget {
     if (s == 'delivered') return 'DELIVERED';
     if (s == 'completed') return 'COMPLETED';
     if (s == 'cancelled') return 'CANCELLED';
-    return raw.toUpperCase();
+    return order.status.toUpperCase();
   }
 
   String _displayDeliveryStatus(String raw) {
     final s = _normalizeStatus(raw);
     if (s.isEmpty) return '';
-    if (s == 'on the way') return 'ON THE WAY';
-    if (s == 'assigned') return 'ASSIGNED';
+    if (s == 'on the way') return 'PICKED UP BY DELIVERY MAN';
+    if (s == 'assigned') return 'WAITING FOR PICKUP';
     if (s == 'delivered') return 'DELIVERED';
     if (s == 'cancelled') return 'CANCELLED';
     return raw.toUpperCase();
@@ -114,8 +147,8 @@ class PurchaseStatusPage extends StatelessWidget {
       itemLines.add('$name x$qty');
     }
     final dateText = DateFormat('dd MMM yyyy, hh:mm a').format(order.createdAt);
-    final statusText = _displayStatus(order.status);
-    final statusColor = _statusColor(order.status);
+    final statusText = _displayStatus(order);
+    final statusColor = _statusColor(order);
     final deliveryStatusText = _displayDeliveryStatus(order.deliveryStatus);
     final quantity = _orderQuantity(order);
 
@@ -346,7 +379,7 @@ class PurchaseStatusPage extends StatelessWidget {
         if (_normalizeStatus(status) == 'to ship') {
           final rows = <OrderItem>[];
           for (final order in store.orders) {
-            if (_isToShipStatus(order.status)) {
+            if (_isToShipOrder(order)) {
               rows.add(order);
             }
           }
@@ -357,7 +390,7 @@ class PurchaseStatusPage extends StatelessWidget {
         if (_normalizeStatus(status) == 'to receive') {
           final rows = <OrderItem>[];
           for (final order in store.orders) {
-            if (_isToReceiveStatus(order.status)) {
+            if (_isToReceiveOrder(order)) {
               rows.add(order);
             }
           }

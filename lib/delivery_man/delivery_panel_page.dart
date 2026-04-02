@@ -82,6 +82,99 @@ class DeliveryPanelPage extends StatelessWidget {
     return 'RM ${amount.toStringAsFixed(2)}';
   }
 
+  List<Map<String, dynamic>> _orderItems(Map<String, dynamic> order) {
+    final raw = order['items'];
+    if (raw is! List) return const [];
+    final out = <Map<String, dynamic>>[];
+    for (final row in raw) {
+      if (row is Map) out.add(Map<String, dynamic>.from(row));
+    }
+    return out;
+  }
+
+  int _itemQty(Map<String, dynamic> item) {
+    final raw = item['qty'];
+    if (raw is int) return raw > 0 ? raw : 1;
+    if (raw is num) {
+      final v = raw.toInt();
+      return v > 0 ? v : 1;
+    }
+    return 1;
+  }
+
+  bool _isPackedState(String raw) {
+    final v = raw.trim().toLowerCase();
+    return v == 'packed' || v == 'packed done' || v == 'done';
+  }
+
+  String _packStateForStoreId(Map packMap, String storeId) {
+    final clean = storeId.trim();
+    if (clean.isEmpty) return 'Pending';
+    final exact = _text(packMap[clean]);
+    if (exact.isNotEmpty) return exact;
+
+    final target = clean.toLowerCase();
+    for (final entry in packMap.entries) {
+      final key = entry.key.toString().trim().toLowerCase();
+      if (key == target) {
+        final value = _text(entry.value);
+        if (value.isNotEmpty) return value;
+      }
+    }
+    return 'Pending';
+  }
+
+  bool _isOrderAtOrPastPacked(Map<String, dynamic> order) {
+    final s = _text(order['status']).toLowerCase();
+    final d = _text(order['deliveryStatus']).toLowerCase();
+    return s == 'packed' ||
+        s == 'to receive' ||
+        s == 'completed' ||
+        s == 'delivered' ||
+        d == 'on the way' ||
+        d == 'delivered';
+  }
+
+  bool _allStoresPacked(Map<String, dynamic> order) {
+    if (_isOrderAtOrPastPacked(order)) return true;
+
+    final items = _orderItems(order);
+    final itemStoreIds = <String>{};
+    for (final item in items) {
+      final sid = _text(item['storeId']);
+      if (sid.isNotEmpty) itemStoreIds.add(sid);
+    }
+    final storeIds = <String>{};
+    if (itemStoreIds.isNotEmpty) {
+      storeIds.addAll(itemStoreIds);
+    }
+    final rawStoreIds = order['storeIds'];
+    if (storeIds.isEmpty && rawStoreIds is List) {
+      for (final sid in rawStoreIds) {
+        final clean = sid.toString().trim();
+        if (clean.isNotEmpty) storeIds.add(clean);
+      }
+    }
+    final orderStoreId = _text(order['storeId']);
+    if (storeIds.isEmpty && orderStoreId.isNotEmpty) storeIds.add(orderStoreId);
+
+    final rawPackMap = order['storePackStatusByStore'];
+    final packMap = rawPackMap is Map ? rawPackMap : const {};
+    if (storeIds.isEmpty && packMap.isNotEmpty) {
+      for (final entry in packMap.entries) {
+        final sid = entry.key.toString().trim();
+        if (sid.isNotEmpty) storeIds.add(sid);
+      }
+    }
+    if (storeIds.isEmpty) return true;
+
+    for (final sid in storeIds) {
+      final status = _packStateForStoreId(packMap, sid).toLowerCase();
+      if (!_isPackedState(status)) return false;
+    }
+    return true;
+  }
+
   Widget _infoCard(String text, {bool loading = false}) {
     return AppCard(
       child:
@@ -340,6 +433,8 @@ class DeliveryPanelPage extends StatelessWidget {
                                 : 5.0;
                         final isOnTheWay = status == 'On The Way';
                         final isDelivered = status == 'Delivered';
+                        final allPacked = _allStoresPacked(o);
+                        final orderItems = _orderItems(o);
 
                         Widget buildOrderCard(String address) {
                           return Container(
@@ -405,10 +500,38 @@ class DeliveryPanelPage extends StatelessWidget {
                                       color: Color(0xFF00695C),
                                     ),
                                   ),
+                                  if (!allPacked) ...[
+                                    const SizedBox(height: 4),
+                                    const Text(
+                                      'Waiting for store packing confirmation before pickup.',
+                                      style: TextStyle(
+                                        color: Color(0xFFEF6C00),
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                    ),
+                                  ],
                                   const SizedBox(height: 4),
                                   Text('Address: $address'),
                                   if (customer.isNotEmpty)
                                     Text('Customer: $customer'),
+                                  if (orderItems.isNotEmpty) ...[
+                                    const SizedBox(height: 8),
+                                    const Text(
+                                      'Products to pickup',
+                                      style: TextStyle(fontWeight: FontWeight.w800),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    ...orderItems.map((item) {
+                                      final sid = _text(item['storeName']);
+                                      final name = _text(
+                                        item['productName'] ?? item['productId'],
+                                        fallback: '-',
+                                      );
+                                      final qty = _itemQty(item);
+                                      final prefix = sid.isEmpty ? '' : '$sid - ';
+                                      return Text('• $prefix$name x$qty');
+                                    }),
+                                  ],
                                   const SizedBox(height: 10),
                                   Wrap(
                                     spacing: 8,
@@ -425,7 +548,7 @@ class DeliveryPanelPage extends StatelessWidget {
                                                   ? Colors.white
                                                   : Colors.black87,
                                         ),
-                                        onPressed: () async {
+                                        onPressed: allPacked ? () async {
                                           final ok = await showConfirmDialog(
                                             context,
                                             title: 'Update Delivery',
@@ -448,7 +571,7 @@ class DeliveryPanelPage extends StatelessWidget {
                                               SnackBar(content: Text('$e')),
                                             );
                                           }
-                                        },
+                                        } : null,
                                         icon: const Icon(
                                           Icons.local_shipping_outlined,
                                         ),

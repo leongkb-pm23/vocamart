@@ -43,6 +43,7 @@ class _AdminPanelPageState extends State<AdminPanelPage>
       Tab(text: "Promotions"),
       Tab(text: "Products"),
       Tab(text: "Prices"),
+      Tab(text: "Orders"),
       Tab(text: "Reviews"),
       Tab(text: "Events"),
       Tab(text: "Reports"),
@@ -73,6 +74,11 @@ class _AdminPanelPageState extends State<AdminPanelPage>
         svc: _svc,
         fixedStoreId: managedStoreId,
         fixedStoreName: managedStoreName,
+      ),
+      OrdersAdminTab(
+        svc: _svc,
+        fixedStoreId: managedStoreId,
+        canAssignDelivery: false,
       ),
       ReviewsAdminTab(svc: _svc, fixedStoreId: managedStoreId),
       EventsAdminTab(
@@ -391,6 +397,71 @@ class _DashboardTab extends StatelessWidget {
     this.fixedStoreId,
   });
 
+  List<Map<String, dynamic>> _orderItems(Map<String, dynamic> order) {
+    final raw = order['items'];
+    if (raw is! List) return const [];
+    final out = <Map<String, dynamic>>[];
+    for (final item in raw) {
+      if (item is Map) out.add(Map<String, dynamic>.from(item));
+    }
+    return out;
+  }
+
+  Set<String> _orderStoreIds(Map<String, dynamic> order) {
+    final out = <String>{};
+    final items = _orderItems(order);
+    for (final item in items) {
+      final sid = (item['storeId'] ?? '').toString().trim();
+      if (sid.isNotEmpty) out.add(sid);
+    }
+    final rawStoreIds = order['storeIds'];
+    if (rawStoreIds is List) {
+      for (final sid in rawStoreIds) {
+        final clean = sid.toString().trim();
+        if (clean.isNotEmpty) out.add(clean);
+      }
+    }
+    final orderStoreId = (order['storeId'] ?? '').toString().trim();
+    if (orderStoreId.isNotEmpty) out.add(orderStoreId);
+    return out;
+  }
+
+  bool _orderContainsStore(Map<String, dynamic> order, String storeId) {
+    final clean = storeId.trim();
+    if (clean.isEmpty) return true;
+    return _orderStoreIds(order).contains(clean);
+  }
+
+  String _packStatusForStore(Map<String, dynamic> order, String storeId) {
+    final clean = storeId.trim();
+    if (clean.isEmpty) return 'Pending';
+    final rawMap = order['storePackStatusByStore'];
+    if (rawMap is Map) {
+      final v = rawMap[clean];
+      final text = (v ?? '').toString().trim();
+      if (text.isNotEmpty) return text;
+    }
+    return 'Pending';
+  }
+
+  bool _isPackedState(String raw) {
+    final v = raw.trim().toLowerCase();
+    return v == 'packed' || v == 'packed done' || v == 'done';
+  }
+
+  bool _isFinalOrder(Map<String, dynamic> order) {
+    final status = (order['status'] ?? '').toString().trim().toLowerCase();
+    final delivery =
+        (order['deliveryStatus'] ?? '').toString().trim().toLowerCase();
+    return status == 'completed' ||
+        status == 'delivered' ||
+        status == 'cancelled' ||
+        status == 'canceled' ||
+        delivery == 'delivered' ||
+        delivery == 'cancelled' ||
+        delivery == 'canceled';
+  }
+
   Future<Map<String, dynamic>> _loadStats() async {
     final db = FirebaseFirestore.instance;
     final cleanStoreId = (fixedStoreId ?? '').trim();
@@ -521,44 +592,81 @@ class _DashboardTab extends StatelessWidget {
       final reviewStoreId =
           (data['storeId'] ?? '').toString().trim().toLowerCase();
       final productId = (data['productId'] ?? '').toString().trim();
-      if (reviewStoreId == cleanStoreIdLower ||
-          scopedProductIds.contains(productId)) {
+      final matchesStore = reviewStoreId == cleanStoreIdLower;
+      final legacyMatchesProduct =
+          reviewStoreId.isEmpty && scopedProductIds.contains(productId);
+      if (matchesStore || legacyMatchesProduct) {
         reviewCount++;
       }
     }
 
     int orderCount = 0;
+    int pendingPackCount = 0;
     double revenue = 0.0;
     if (!scoped) {
       final sales = await svc.salesSummary();
       orderCount = (sales['totalOrders'] ?? 0) as int;
       revenue = ((sales['totalRevenue'] ?? 0.0) as num).toDouble();
     } else {
-      bool loadedFromCache = false;
+      bool loadedFromLive = false;
       try {
-        final cacheSnap =
-            await db
-                .collection('stores')
-                .doc(cleanStoreId)
-                .collection('report_cache')
-                .doc('yearly')
-                .get();
-        final cache = cacheSnap.data() ?? const <String, dynamic>{};
-        final cacheOrders = cache['orders'];
-        final cacheRevenue = cache['revenue'];
-        if (cacheOrders is num || cacheRevenue is num) {
-          orderCount = (cacheOrders is num) ? cacheOrders.toInt() : 0;
-          revenue = (cacheRevenue is num) ? cacheRevenue.toDouble() : 0.0;
-          loadedFromCache = true;
-        }
-      } on FirebaseException {
-        // Ignore cache read issues; fallback to live summary.
-      }
-
-      if (!loadedFromCache) {
-        final summary = await svc.storeScopedOrderSummary(storeId: cleanStoreId);
+        final now = DateTime.now();
+        final monthStart = DateTime(now.year, now.month, 1);
+        final monthEnd =
+            (now.month == 12)
+                ? DateTime(now.year + 1, 1, 1)
+                : DateTime(now.year, now.month + 1, 1);
+        final summary = await svc.storeScopedOrderSummary(
+          storeId: cleanStoreId,
+          startInclusive: monthStart,
+          endExclusive: monthEnd,
+          forceRefresh: true,
+        );
         orderCount = (summary['orders'] as int?) ?? 0;
         revenue = ((summary['revenue'] as num?) ?? 0.0).toDouble();
+        loadedFromLive = true;
+      } on FirebaseException {
+        // Ignore live summary issues; fallback to cached summary if available.
+      }
+
+      if (!loadedFromLive) {
+        try {
+          final cacheSnap =
+              await db
+                  .collection('stores')
+                  .doc(cleanStoreId)
+                  .collection('report_cache')
+                  .doc('monthly')
+                  .get();
+          final cache = cacheSnap.data() ?? const <String, dynamic>{};
+          final cacheOrders = cache['orders'];
+          final cacheRevenue = cache['revenue'];
+          if (cacheOrders is num || cacheRevenue is num) {
+            orderCount = (cacheOrders is num) ? cacheOrders.toInt() : 0;
+            revenue = (cacheRevenue is num) ? cacheRevenue.toDouble() : 0.0;
+          }
+        } on FirebaseException {
+          // Keep default 0 when both live and cache reads fail.
+        }
+      }
+
+      try {
+        final orderDocs = await svc.ordersAllForAdmin(
+          forceRefresh: true,
+          storeId: cleanStoreId,
+        );
+        for (final orderDoc in orderDocs) {
+          final order = orderDoc.data();
+          if (!_orderContainsStore(order, cleanStoreId)) continue;
+          if (_isFinalOrder(order)) continue;
+          final packed =
+              _isPackedState(_packStatusForStore(order, cleanStoreId));
+          if (!packed) pendingPackCount++;
+        }
+      } on FirebaseException catch (e) {
+        if (e.code != 'permission-denied' && e.code != 'failed-precondition') {
+          rethrow;
+        }
       }
     }
 
@@ -569,6 +677,7 @@ class _DashboardTab extends StatelessWidget {
       'reviews': reviewCount,
       'events': eventsDocs.length,
       'orders': orderCount,
+      'pendingPackOrders': pendingPackCount,
       'revenue': revenue,
     };
   }
@@ -596,6 +705,7 @@ class _DashboardTab extends StatelessWidget {
         }
 
         final s = snap.data!;
+        final scoped = (fixedStoreId ?? '').trim().isNotEmpty;
 
         return RefreshIndicator(
           onRefresh: () async {
@@ -644,13 +754,25 @@ class _DashboardTab extends StatelessWidget {
                     width: 165,
                     height: 148,
                     child: _DashboardCard(
-                      title: 'PRICES',
-                      value: '',
-                      icon: Icons.attach_money_outlined,
+                      title: 'ORDERS',
+                      value: '${s['orders']}',
+                      icon: Icons.local_shipping_outlined,
                       iconColor: const Color(0xFF4CAF50),
-                      onTap: () => onOpenTab(3),
+                      onTap: () => onOpenTab(4),
                     ),
                   ),
+                  if (scoped)
+                    SizedBox(
+                      width: 165,
+                      height: 148,
+                      child: _DashboardCard(
+                        title: 'PENDING PACK',
+                        value: '${s['pendingPackOrders'] ?? 0}',
+                        icon: Icons.inventory_2_outlined,
+                        iconColor: const Color(0xFFEF6C00),
+                        onTap: () => onOpenTab(4),
+                      ),
+                    ),
                   SizedBox(
                     width: 165,
                     height: 148,
@@ -659,7 +781,7 @@ class _DashboardTab extends StatelessWidget {
                       value: '${s['reviews']}',
                       icon: Icons.rate_review_outlined,
                       iconColor: const Color(0xFFFF9800),
-                      onTap: () => onOpenTab(4),
+                      onTap: () => onOpenTab(5),
                     ),
                   ),
                   SizedBox(
@@ -670,7 +792,7 @@ class _DashboardTab extends StatelessWidget {
                       value: '${s['events']}',
                       icon: Icons.event_note_outlined,
                       iconColor: const Color(0xFF009688),
-                      onTap: () => onOpenTab(5),
+                      onTap: () => onOpenTab(6),
                     ),
                   ),
                 ],
@@ -678,8 +800,16 @@ class _DashboardTab extends StatelessWidget {
               const SizedBox(height: 14),
               _RevenueCard(
                 revenue: (s['revenue'] as double),
-                onTap: () => onOpenTab(6),
+                onTap: () => onOpenTab(7),
               ),
+              if (scoped) ...[
+                const SizedBox(height: 14),
+                _PendingPackDashboardPanel(
+                  svc: svc,
+                  storeId: (fixedStoreId ?? '').trim(),
+                  onOpenOrdersTab: () => onOpenTab(4),
+                ),
+              ],
             ],
           ),
         );
@@ -830,6 +960,446 @@ class _RevenueCard extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _PendingPackDashboardPanel extends StatefulWidget {
+  final FirestoreService svc;
+  final String storeId;
+  final VoidCallback onOpenOrdersTab;
+
+  const _PendingPackDashboardPanel({
+    required this.svc,
+    required this.storeId,
+    required this.onOpenOrdersTab,
+  });
+
+  @override
+  State<_PendingPackDashboardPanel> createState() =>
+      _PendingPackDashboardPanelState();
+}
+
+class _PendingPackDashboardPanelState extends State<_PendingPackDashboardPanel> {
+  Map<String, String> _productNameById = const {};
+  final Set<String> _notifiedPendingOrderIds = <String>{};
+  bool _isShowingPendingOrderNotice = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadProductNames();
+  }
+
+  @override
+  void didUpdateWidget(covariant _PendingPackDashboardPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.storeId.trim() != widget.storeId.trim()) {
+      _notifiedPendingOrderIds.clear();
+    }
+  }
+
+  Future<void> _loadProductNames() async {
+    try {
+      final snap = await FirebaseFirestore.instance.collection('products').get();
+      final byId = <String, String>{};
+      for (final doc in snap.docs) {
+        final name = (doc.data()['name'] ?? '').toString().trim();
+        if (name.isNotEmpty) byId[doc.id] = name;
+      }
+      if (!mounted) return;
+      setState(() => _productNameById = byId);
+    } on FirebaseException {
+      // Leave lookup empty; card will fallback to productId.
+    }
+  }
+
+  DateTime _asDate(dynamic value) {
+    if (value is Timestamp) return value.toDate();
+    if (value is DateTime) return value;
+    return DateTime.fromMillisecondsSinceEpoch(0);
+  }
+
+  List<Map<String, dynamic>> _orderItems(Map<String, dynamic> order) {
+    final raw = order['items'];
+    if (raw is! List) return const [];
+    final out = <Map<String, dynamic>>[];
+    for (final item in raw) {
+      if (item is Map) out.add(Map<String, dynamic>.from(item));
+    }
+    return out;
+  }
+
+  Set<String> _orderStoreIds(Map<String, dynamic> order) {
+    final out = <String>{};
+    final items = _orderItems(order);
+    for (final item in items) {
+      final sid = (item['storeId'] ?? '').toString().trim();
+      if (sid.isNotEmpty) out.add(sid);
+    }
+    final rawStoreIds = order['storeIds'];
+    if (rawStoreIds is List) {
+      for (final sid in rawStoreIds) {
+        final clean = sid.toString().trim();
+        if (clean.isNotEmpty) out.add(clean);
+      }
+    }
+    final orderStoreId = (order['storeId'] ?? '').toString().trim();
+    if (orderStoreId.isNotEmpty) out.add(orderStoreId);
+    return out;
+  }
+
+  bool _orderContainsStore(Map<String, dynamic> order, String storeId) {
+    final clean = storeId.trim();
+    if (clean.isEmpty) return true;
+    return _orderStoreIds(order).contains(clean);
+  }
+
+  String _packStatusForStore(Map<String, dynamic> order, String storeId) {
+    final clean = storeId.trim();
+    if (clean.isEmpty) return 'Pending';
+    final rawMap = order['storePackStatusByStore'];
+    if (rawMap is Map) {
+      final v = rawMap[clean];
+      final text = (v ?? '').toString().trim();
+      if (text.isNotEmpty) return text;
+    }
+    return 'Pending';
+  }
+
+  bool _isPackedState(String raw) {
+    final v = raw.trim().toLowerCase();
+    return v == 'packed' || v == 'packed done' || v == 'done';
+  }
+
+  bool _isFinalOrder(Map<String, dynamic> order) {
+    final status = (order['status'] ?? '').toString().trim().toLowerCase();
+    final delivery =
+        (order['deliveryStatus'] ?? '').toString().trim().toLowerCase();
+    return status == 'completed' ||
+        status == 'delivered' ||
+        status == 'cancelled' ||
+        status == 'canceled' ||
+        delivery == 'delivered' ||
+        delivery == 'cancelled' ||
+        delivery == 'canceled';
+  }
+
+  String _productNameOf(Map<String, dynamic> item) {
+    final direct =
+        (item['productName'] ??
+                item['name'] ??
+                item['productTitle'] ??
+                item['title'] ??
+                '')
+            .toString()
+            .trim();
+    if (direct.isNotEmpty) return direct;
+    final productId = (item['productId'] ?? '').toString().trim();
+    if (productId.isEmpty) return '-';
+    return (_productNameById[productId] ?? productId).trim();
+  }
+
+  int _qtyOf(Map<String, dynamic> item) {
+    final raw = item['qty'];
+    if (raw is int) return raw > 0 ? raw : 1;
+    if (raw is num) {
+      final v = raw.toInt();
+      return v > 0 ? v : 1;
+    }
+    return 1;
+  }
+
+  String _dateText(DateTime dt) {
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+    final m = months[dt.month - 1];
+    return '${dt.day.toString().padLeft(2, '0')} $m ${dt.year}';
+  }
+
+  void _maybeShowPendingPackNotification(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> pendingDocs,
+  ) {
+    if (!mounted || _isShowingPendingOrderNotice) return;
+
+    final newPending =
+        pendingDocs
+            .where((doc) => !_notifiedPendingOrderIds.contains(doc.id))
+            .toList();
+    if (newPending.isEmpty) return;
+
+    for (final doc in pendingDocs) {
+      _notifiedPendingOrderIds.add(doc.id);
+    }
+
+    _isShowingPendingOrderNotice = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) {
+        _isShowingPendingOrderNotice = false;
+        return;
+      }
+
+      final previewIds = newPending.take(3).map((e) => e.id).toList();
+      final extraCount = newPending.length - previewIds.length;
+      final previewText =
+          previewIds.isEmpty ? '' : 'Order ${previewIds.join(', ')}';
+      final extraText = extraCount > 0 ? ' and $extraCount more' : '';
+
+      await showGeneralDialog<void>(
+        context: context,
+        barrierLabel: 'Pending orders',
+        barrierDismissible: true,
+        barrierColor: Colors.black.withValues(alpha: 0.2),
+        transitionDuration: const Duration(milliseconds: 280),
+        pageBuilder: (dialogContext, _, __) {
+          return SafeArea(
+            child: Align(
+              alignment: Alignment.topRight,
+              child: Padding(
+                padding: const EdgeInsets.only(top: 12, right: 12, left: 36),
+                child: Material(
+                  color: Colors.transparent,
+                  child: Container(
+                    width: 360,
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: const Color(0xFFE6E6E6)),
+                      boxShadow: const [
+                        BoxShadow(
+                          color: Color(0x22000000),
+                          blurRadius: 12,
+                          offset: Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Row(
+                          children: [
+                            Icon(
+                              Icons.notifications_active_outlined,
+                              color: Color(0xFF1565C0),
+                            ),
+                            SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'Pending Orders To Pack',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w900,
+                                  fontSize: 16,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'You have ${newPending.length} new pending order(s).'
+                          '${previewText.isEmpty ? '' : '\n$previewText$extraText.'}',
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        const SizedBox(height: 10),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            TextButton(
+                              onPressed: () => Navigator.pop(dialogContext),
+                              child: const Text('Close'),
+                            ),
+                            const SizedBox(width: 6),
+                            ElevatedButton(
+                              onPressed: () {
+                                Navigator.pop(dialogContext);
+                                widget.onOpenOrdersTab();
+                              },
+                              child: const Text('Open Orders'),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+        transitionBuilder: (context, animation, secondaryAnimation, child) {
+          final slide = Tween<Offset>(
+            begin: const Offset(1.0, 0.0),
+            end: Offset.zero,
+          ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOut));
+          return SlideTransition(
+            position: slide,
+            child: FadeTransition(opacity: animation, child: child),
+          );
+        },
+      );
+
+      _isShowingPendingOrderNotice = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFE6E6E6)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Pending Pack Orders',
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
+          ),
+          const SizedBox(height: 10),
+          StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+            stream: widget.svc.ordersAllStream(),
+            builder: (context, snap) {
+              final docs = snap.data?.docs ?? const [];
+              final pending =
+                  docs.where((doc) {
+                    final order = doc.data();
+                    if (!_orderContainsStore(order, widget.storeId)) {
+                      return false;
+                    }
+                    if (_isFinalOrder(order)) return false;
+                    final packed =
+                        _isPackedState(
+                          _packStatusForStore(order, widget.storeId),
+                        );
+                    return !packed;
+                  }).toList()
+                    ..sort((a, b) {
+                      final ad = _asDate(a.data()['createdAt']);
+                      final bd = _asDate(b.data()['createdAt']);
+                      return bd.compareTo(ad);
+                    });
+              _maybeShowPendingPackNotification(pending);
+
+              if (snap.connectionState == ConnectionState.waiting &&
+                  pending.isEmpty) {
+                return const Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Center(child: CircularProgressIndicator()),
+                );
+              }
+
+              if (pending.isEmpty) {
+                return Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF7FAFF),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFFE6E6E6)),
+                  ),
+                  child: const Text(
+                    'No pending pack orders.',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                );
+              }
+
+              return Column(
+                children: [
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'Total Pending: ${pending.length}',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFFEF6C00),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  ...pending.map((doc) {
+                    final order = doc.data();
+                    final created = _asDate(order['createdAt']);
+                    final customer =
+                        (order['userName'] ??
+                                order['customerName'] ??
+                                order['email'] ??
+                                'Unknown Customer')
+                            .toString();
+                    final items =
+                        _orderItems(order).where((item) {
+                          final sid = (item['storeId'] ?? '').toString().trim();
+                          if (sid.isEmpty) return true;
+                          return sid == widget.storeId;
+                        }).toList();
+
+                    return Container(
+                      width: double.infinity,
+                      margin: const EdgeInsets.only(bottom: 10),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF7FAFF),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFFE6E6E6)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Order ${doc.id}',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w900,
+                              fontSize: 16,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            '$customer • ${_dateText(created)}',
+                            style: const TextStyle(fontWeight: FontWeight.w600),
+                          ),
+                          if (items.isNotEmpty) ...[
+                            const SizedBox(height: 8),
+                            ...items.map((item) {
+                              final name = _productNameOf(item);
+                              final qty = _qtyOf(item);
+                              return Text('- $name x$qty');
+                            }),
+                          ],
+                        ],
+                      ),
+                    );
+                  }),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton.icon(
+                      onPressed: widget.onOpenOrdersTab,
+                      icon: const Icon(Icons.open_in_new),
+                      label: const Text('Open Orders Tab'),
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ],
       ),
     );
   }

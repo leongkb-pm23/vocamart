@@ -174,9 +174,10 @@ class ProductItem {
 // This class defines CartItem, used for this page/feature.
 class CartItem {
   final String productId;
+  final String storeId;
   int qty;
 
-  CartItem({required this.productId, required this.qty});
+  CartItem({required this.productId, required this.qty, this.storeId = ''});
 }
 
 // This class defines PaymentMethodItem, used for this page/feature.
@@ -999,6 +1000,7 @@ class AppStore extends ChangeNotifier {
                 CartItem(
                   productId: (entry['productId'] ?? '').toString(),
                   qty: _asInt(entry['qty'], fallback: 1),
+                  storeId: (entry['storeId'] ?? '').toString().trim(),
                 ),
               );
             }
@@ -1586,7 +1588,9 @@ class AppStore extends ChangeNotifier {
   List<CartItem> _copyCartItems() {
     final result = <CartItem>[];
     for (final item in _cart) {
-      result.add(CartItem(productId: item.productId, qty: item.qty));
+      result.add(
+        CartItem(productId: item.productId, qty: item.qty, storeId: item.storeId),
+      );
     }
     return result;
   }
@@ -1610,6 +1614,7 @@ class AppStore extends ChangeNotifier {
     final rows = <Map<String, dynamic>>[];
     for (final item in items) {
       final product = _productForCart(item.productId);
+      final productName = (product?.name ?? item.productId).trim();
       String storeId = '';
       String storeName = '';
       double unitPrice = 0.0;
@@ -1630,6 +1635,7 @@ class AppStore extends ChangeNotifier {
         'productId':
             resolvedProductIds?[item.productId] ??
             _resolveRawProductIdForCartItem(item),
+        if (productName.isNotEmpty) 'productName': productName,
         'qty': qty,
         if (storeId.isNotEmpty) 'storeId': storeId,
         if (storeName.isNotEmpty) 'storeName': storeName,
